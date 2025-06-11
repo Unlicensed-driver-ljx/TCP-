@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QTcpSocket>
 #include <QHostAddress>
+#include <QNetworkProxy>
 #include "sysdefine.h"
 
 /**

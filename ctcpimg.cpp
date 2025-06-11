@@ -96,6 +96,9 @@ void CTCPImg::start(QString strAddr, int port)
         TCP_sendMesSocket->disconnectFromHost();
     }
     
+    // 禁用代理，避免系统代理设置干扰图像传输
+    TCP_sendMesSocket->setProxy(QNetworkProxy::NoProxy);
+    
     qDebug() << "开始连接到服务器：" << strAddr << ":" << port;
     this->TCP_sendMesSocket->connectToHost(QHostAddress(strAddr), port);
 }

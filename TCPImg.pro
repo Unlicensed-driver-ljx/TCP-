@@ -27,12 +27,16 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
         main.cpp \
         dialog.cpp \
-    ctcpimg.cpp
+        ctcpimg.cpp \
+        dataformatter.cpp \
+        tcpdebugger.cpp
 
 HEADERS += \
         dialog.h \
-    ctcpimg.h \
-    sysdefine.h
+        ctcpimg.h \
+        sysdefine.h \
+        dataformatter.h \
+        tcpdebugger.h
 
 FORMS += \
         dialog.ui
