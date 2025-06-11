@@ -90,11 +90,14 @@ TCPImg 是一个基于Qt框架开发的TCP网络图像传输接收程序。该�
 ## 使用说明
 
 ### 环境要求
-- Qt 5.x 或更高版本
+- **Windows**: Qt 5.x/Qt 6.x
+- **Linux**: Qt 5.12 及以上版本（推荐）
 - 支持Qt Network模块
-- C++编译器支持
+- C++11编译器支持
 
 ### 编译运行
+
+#### 🖥️ Windows环境
 1. **使用Qt Creator**：
    - 打开TCPImg.pro项目文件
    - 配置编译环境
@@ -106,6 +109,82 @@ TCPImg 是一个基于Qt框架开发的TCP网络图像传输接收程序。该�
    make
    ./TCPImg
    ```
+
+#### 🐧 Linux环境（Qt 5.12+）
+**方法1：使用自动编译脚本（推荐）**
+```bash
+# 赋予脚本执行权限
+chmod +x build_linux.sh
+
+# 运行编译脚本
+./build_linux.sh
+
+# 脚本会自动完成以下步骤：
+# - 检查Qt版本
+# - 清理构建文件
+# - 配置并编译项目
+# - 输出编译结果
+```
+
+**方法2：手动编译**
+```bash
+# 创建构建目录
+mkdir -p build
+cd build
+
+# 配置项目（确保使用Qt 5.12+）
+qmake ../TCPImg.pro
+
+# 编译项目（使用所有CPU核心）
+make -j$(nproc)
+
+# 运行程序
+./TCPImg
+```
+
+**方法3：使用Qt Creator (Linux)**
+```bash
+# 安装Qt Creator（Ubuntu/Debian）
+sudo apt-get install qtcreator qt5-default
+
+# 或者在其他Linux发行版上安装相应的Qt开发包
+# 然后打开项目文件
+qtcreator TCPImg.pro
+```
+
+#### 🔧 Linux依赖安装
+**Ubuntu/Debian系统：**
+```bash
+# 安装Qt 5.12开发环境
+sudo apt-get update
+sudo apt-get install qt5-default qtbase5-dev qttools5-dev-tools
+
+# 安装网络模块（通常已包含在qtbase5-dev中）
+sudo apt-get install qtbase5-dev
+```
+
+**CentOS/RHEL/Fedora系统：**
+```bash
+# Fedora
+sudo dnf install qt5-qtbase-devel qt5-qttools-devel
+
+# CentOS/RHEL (需要EPEL源)
+sudo yum install qt5-qtbase-devel qt5-qttools-devel
+```
+
+#### ⚠️ Linux注意事项
+1. **Qt版本兼容性**：
+   - 项目已针对Qt 5.12进行优化
+   - 修复了Qt 6特有的信号槽语法
+   - 使用传统的SIGNAL/SLOT宏确保最大兼容性
+
+2. **编译器要求**：
+   - GCC 4.8+ 或 Clang 3.3+（支持C++11）
+   - 项目配置文件自动检查Qt版本
+
+3. **运行时依赖**：
+   - 确保安装了Qt运行时库
+   - 检查LD_LIBRARY_PATH是否包含Qt库路径
 
 ### 操作步骤
 
@@ -261,8 +340,42 @@ Dialog (主界面)
 - 内存分配和释放状态
 - 用户操作和输入验证结果
 
+## 版本历史 📋
+
+### v2.1.0 (2024-12-19) - Linux Qt 5.12兼容版本 🐧
+- ✅ **Linux平台支持**：完全适配Linux环境下的Qt 5.12版本
+- ✅ **信号槽兼容性修复**：替换Qt 6语法为Qt 5.12兼容的SIGNAL/SLOT宏
+- ✅ **QOverload语法修复**：改为传统的信号槽连接方式
+- ✅ **项目配置优化**：添加Qt版本检查和C++11标准支持
+- ✅ **自动编译脚本**：新增`build_linux.sh`Linux自动编译脚本
+- ✅ **跨平台支持**：同时支持Windows (Qt 5.x/6.x) 和 Linux (Qt 5.12+)
+
+### v2.0.0 (2024-12-19) - 网络调试工具集成版本 🚀
+- ✅ **双模式支持**：集成TCP图像传输 + 网络调试工具
+- ✅ **网络调试器**：支持客户端/服务器模式的TCP调试
+- ✅ **多格式显示**：6种数据显示格式（文本、十六进制、二进制等）
+- ✅ **实时统计**：连接状态、传输速率、数据包计数
+- ✅ **智能IP检测**：自动获取本地IP地址并优先排序
+- ✅ **时间戳功能**：可选的数据时间戳标记
+- ✅ **代理错误修复**：解决网络代理配置问题
+- ✅ **界面重构**：双标签页设计，提升用户体验
+
+### v1.1.0 (2024-12-18) - 稳定性增强版本 ⚡
+- ✅ **内存管理修复**：修正析构函数内存释放问题
+- ✅ **错误处理完善**：添加详细的中文错误提示
+- ✅ **数据校验增强**：实现数据大小范围检查
+- ✅ **注释系统完善**：添加完整的中文代码注释
+- ✅ **界面优化**：改进用户界面和状态反馈
+
+### v1.0.0 (2022-05-21) - 初始版本 🎉
+- ✅ **基础TCP图像传输**：支持1024x1024灰度图像接收
+- ✅ **网络连接管理**：TCP客户端连接功能
+- ✅ **图像显示**：实时图像缓冲和显示
+- ✅ **Qt界面**：基于Qt的用户界面框架
+
 ---
 
 **项目创建时间**：2022-05-21  
-**开发环境**：Qt Creator with Qt 6.8.2  
-**编译器**：MinGW 64-bit 
+**开发环境**：Qt Creator with Qt 6.8.2 (Windows) / Qt 5.12+ (Linux)  
+**编译器**：MinGW 64-bit (Windows) / GCC 4.8+ (Linux)  
+**项目仓库**：https://github.com/Unlicensed-driver-ljx/TCP-.git 
