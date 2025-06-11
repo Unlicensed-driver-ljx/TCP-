@@ -1,0 +1,98 @@
+# Qt构建产生的文件
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.dmg
+*.deb
+*.rpm
+
+# Qt项目构建目录
+build*/
+debug*/
+release*/
+Debug*/
+Release*/
+
+# Qt Designer和其他工具产生的文件
+*.pro.user*
+*.pro.user.*
+*.autosave
+*.qmlc
+*.jsc
+Makefile*
+*build-*
+
+# MOC文件
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+
+# UI编译后的文件
+ui_*.h
+
+# Qt翻译文件
+*.qm
+
+# IDE文件
+.vscode/
+.vs/
+*.vcxproj*
+*.sln
+*.suo
+*.ncb
+*.aps
+*.plg
+*.opt
+*.clw
+*.user
+*.ilk
+*.pdb
+*.obj
+*.pch
+*.idb
+*.res
+*.sbr
+*.bsc
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+*.cache
+
+# Qt缓存和配置
+.qtc_clangd/
+*.autosave
+
+# CMake产生的文件
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# 编译器产生的备份文件
+*.orig
+*.rej
+*~
+*.bak
+*.sw[po]
+
+# 二进制和可执行文件
+*.bin
+*.com
+*.class
+*.dex
+*.war
+*.jar 
