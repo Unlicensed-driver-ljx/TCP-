@@ -12,16 +12,21 @@ greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 TARGET = TCPImg
 TEMPLATE = app
 
-# The following define makes your compiler emit warnings if you use
-# any feature of Qt which as been marked as deprecated (the exact warnings
-# depend on your compiler). Please consult the documentation of the
-# deprecated API in order to know how to port your code away from it.
+# Qt 5.12兼容性设置
 DEFINES += QT_DEPRECATED_WARNINGS
 
-# You can also make your code fail to compile if you use deprecated APIs.
-# In order to do so, uncomment the following line.
-# You can also select to disable deprecated APIs only up to a certain version of Qt.
-#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
+# 确保支持Qt 5.12及以上版本
+lessThan(QT_MAJOR_VERSION, 5) {
+    error("This project requires Qt 5.12 or later")
+}
+
+lessThan(QT_MAJOR_VERSION, 5) | lessThan(QT_MINOR_VERSION, 12) {
+    # 如果Qt版本小于5.12，可能需要一些特殊处理
+    message("Qt version is less than 5.12, some features may not be available")
+}
+
+# 为Qt 5.12设置C++标准
+CONFIG += c++11
 
 
 SOURCES += \

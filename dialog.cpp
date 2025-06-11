@@ -329,8 +329,9 @@ QLayout* Dialog::createDebugControlPanel()
     formatLayout->addWidget(m_dataFormatCombo);
     formatLayout->addWidget(m_timestampCheckBox);
     
-    connect(m_dataFormatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
-            this, &Dialog::onDataFormatChanged);
+    // Qt 5.12兼容性：使用SIGNAL/SLOT宏
+    connect(m_dataFormatCombo, SIGNAL(currentIndexChanged(int)), 
+            this, SLOT(onDataFormatChanged()));
     connect(m_timestampCheckBox, &QCheckBox::toggled, [this](bool checked) {
         m_tcpDebugger->setShowTimestamp(checked);
     });

@@ -117,8 +117,9 @@ void CTCPDebugger::startClient(const QString& host, quint16 port)
     connect(m_clientSocket, &QTcpSocket::connected, this, &CTCPDebugger::onClientConnected);
     connect(m_clientSocket, &QTcpSocket::disconnected, this, &CTCPDebugger::onClientDisconnected);
     connect(m_clientSocket, &QTcpSocket::readyRead, this, &CTCPDebugger::onDataReceived);
-    connect(m_clientSocket, &QAbstractSocket::errorOccurred,
-            this, &CTCPDebugger::onSocketError);
+    // Qt 5.12兼容性：使用SIGNAL/SLOT宏或者静态转换
+    connect(m_clientSocket, SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(onSocketError(QAbstractSocket::SocketError)));
     
     m_currentHost = host;
     m_currentPort = port;
@@ -583,8 +584,9 @@ void CTCPDebugger::onNewConnection()
         });
         
         connect(clientSocket, &QTcpSocket::readyRead, this, &CTCPDebugger::onDataReceived);
-        connect(clientSocket, &QAbstractSocket::errorOccurred,
-                this, &CTCPDebugger::onSocketError);
+        // Qt 5.12兼容性：使用SIGNAL/SLOT宏
+        connect(clientSocket, SIGNAL(error(QAbstractSocket::SocketError)),
+                this, SLOT(onSocketError(QAbstractSocket::SocketError)));
         
         QString clientAddr = getRemoteAddressInfo(clientSocket);
         emit newClientConnected(clientAddr);
