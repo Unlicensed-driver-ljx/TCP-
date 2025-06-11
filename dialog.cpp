@@ -15,7 +15,7 @@ Dialog::Dialog(QWidget *parent) :
     ui->setupUi(this);
     
     // 设置窗口标题
-    this->setWindowTitle("TCP图像传输接收程序");
+    this->setWindowTitle("TCP图像传输接收程序 - 新版本");  // 正确的修改，要保留
     
     // 连接开始按钮的点击事件
     connect(ui->pushButtonStart, &QPushButton::clicked, [=]()
