@@ -131,9 +131,15 @@ void Dialog::showLabelImg()
         return;
     }
     
+    // 获取当前图像参数
+    int width = m_tcpImg.getImageWidth();
+    int height = m_tcpImg.getImageHeight();
+    int channels = m_tcpImg.getImageChannels();
+    int totalSize = width * height * channels;
+    
     // 将接收到的图像数据复制到显示缓冲区
     try {
-        memcpy(m_showBuffer, frameBuffer, WIDTH * HEIGHT * CHANLE);
+        memcpy(m_showBuffer, frameBuffer, totalSize);
     } catch (const std::exception& e) {
         qDebug() << "错误：图像数据复制失败：" << e.what();
         ui->labelShowImg->setText("错误：图像数据处理失败");
@@ -141,9 +147,72 @@ void Dialog::showLabelImg()
         return;
     }
     
+    // 根据通道数选择合适的图像格式
+    QImage::Format imageFormat;
+    switch (channels) {
+        case 1:
+            imageFormat = QImage::Format_Grayscale8;
+            break;
+        case 3:
+            imageFormat = QImage::Format_RGB888;
+            break;
+        case 4:
+            imageFormat = QImage::Format_RGBA8888;
+            break;
+        case 2:
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+            // 对于2通道或5-8通道，提取第一个通道显示为灰度图像
+            imageFormat = QImage::Format_Grayscale8;
+            qDebug() << "多通道图像" << channels << "通道，提取第一通道显示为灰度图像";
+            break;
+        default:
+            // 其他情况使用灰度格式
+            imageFormat = QImage::Format_Grayscale8;
+            qDebug() << "不支持的通道数" << channels << "，使用灰度格式显示";
+            break;
+    }
+    
     // 创建QImage对象进行图像格式转换
-    // 注意：这里使用灰度格式，如果需要RGB格式，请修改为Format_RGB888
-    m_qimage = QImage((const unsigned char*)(m_showBuffer), WIDTH, HEIGHT, QImage::Format_Grayscale8);
+    if (channels == 1) {
+        // 灰度图像：直接使用数据
+        m_qimage = QImage((const unsigned char*)(m_showBuffer), width, height, imageFormat);
+    } else if (channels == 3) {
+        // RGB图像：计算行跨度
+        int bytesPerLine = width * channels;
+        m_qimage = QImage((const unsigned char*)(m_showBuffer), width, height, bytesPerLine, imageFormat);
+    } else if (channels == 4) {
+        // RGBA图像：计算行跨度
+        int bytesPerLine = width * channels;
+        m_qimage = QImage((const unsigned char*)(m_showBuffer), width, height, bytesPerLine, imageFormat);
+    } else {
+        // 多通道图像（2，5-8通道）：提取第一个通道显示
+        unsigned char* grayBuffer = new unsigned char[width * height];
+        
+        try {
+            // 提取第一个通道的数据
+            for (int i = 0; i < width * height; ++i) {
+                grayBuffer[i] = static_cast<unsigned char>(m_showBuffer[i * channels]);
+            }
+            
+            // 创建灰度图像
+            m_qimage = QImage(grayBuffer, width, height, QImage::Format_Grayscale8).copy();
+            
+            // 释放临时缓冲区
+            delete[] grayBuffer;
+            
+            qDebug() << "多通道图像处理完成，提取了第一通道用于显示";
+            
+        } catch (const std::exception& e) {
+            qDebug() << "多通道图像处理失败：" << e.what();
+            delete[] grayBuffer;
+            ui->labelShowImg->setText("错误：多通道图像处理失败");
+            ui->pushButtonStart->setEnabled(true);
+            return;
+        }
+    }
     
     // 检查QImage对象是否创建成功
     if (!m_qimage.isNull()) {
@@ -164,11 +233,40 @@ void Dialog::showLabelImg()
         ui->pushButtonStart->setEnabled(true);
         
         qDebug() << "图像显示更新成功，图像尺寸：" << m_qimage.width() << "x" << m_qimage.height();
+        
+        // 🔍 在界面上显示帧头验证结果
+        char* frameBuffer = m_tcpImg.getFrameBuffer();
+        if (frameBuffer && totalSize >= 2) {
+            unsigned char* data = reinterpret_cast<unsigned char*>(frameBuffer);
+            bool headerMatch = (data[0] == 0x7E && data[1] == 0x7E);
+            
+            QString headerInfo = QString("帧头：%1 %2 %3")
+                                .arg(data[0], 2, 16, QChar('0')).toUpper()
+                                .arg(data[1], 2, 16, QChar('0')).toUpper()
+                                .arg(headerMatch ? "✅" : "❌");
+            
+            // 显示更多帧结构信息
+            if (totalSize >= 8) {
+                QString frameStructure = QString("帧结构：%1 %2 | %3 %4 %5 %6 %7 %8")
+                                        .arg(data[0], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[1], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[2], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[3], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[4], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[5], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[6], 2, 16, QChar('0')).toUpper()
+                                        .arg(data[7], 2, 16, QChar('0')).toUpper();
+                qDebug() << "界面显示帧结构：" << frameStructure;
+            }
+            
+            // 可以在状态栏或其他地方显示这个信息
+            qDebug() << "界面显示帧头信息：" << headerInfo;
+        }
     }
     else {
         // 图像创建失败
         qDebug() << "错误：QImage对象创建失败，可能是图像数据格式不正确";
-        qDebug() << "图像参数：宽度=" << WIDTH << "，高度=" << HEIGHT << "，通道数=" << CHANLE;
+        qDebug() << "图像参数：宽度=" << width << "，高度=" << height << "，通道数=" << channels;
         
         // 显示错误信息给用户
         ui->labelShowImg->setText("错误：图像数据格式不正确\n\n可能原因：\n1. 图像数据损坏\n2. 数据格式不匹配\n3. 网络传输错误\n\n请检查服务器端图像格式设置");
@@ -206,6 +304,10 @@ void Dialog::initDebugInterface()
     inputLayout->addWidget(ui->pushButtonStart);
     
     originalLayout->addLayout(inputLayout);
+    
+    // 添加分辨率设置面板
+    originalLayout->addLayout(createResolutionPanel());
+    
     originalLayout->addWidget(ui->labelShowImg, 1);  // 图像显示区占主要空间
     
     imageLayout->addWidget(imageWidget);
@@ -623,4 +725,186 @@ void Dialog::refreshLocalIPAddresses()
     m_debugDataDisplay->append(QString("=== 已刷新本地IP地址列表，发现 %1 个可用地址 ===").arg(ipAddresses.size()));
     
     qDebug() << "本地IP地址列表已刷新，当前选择：" << m_localIPCombo->currentText();
+}
+
+/**
+ * @brief 创建分辨率设置面板
+ * @return 分辨率设置面板布局
+ */
+QLayout* Dialog::createResolutionPanel()
+{
+    QGroupBox* resolutionGroup = new QGroupBox("图像分辨率设置");
+    QHBoxLayout* resolutionLayout = new QHBoxLayout(resolutionGroup);
+    
+    // 宽度设置
+    resolutionLayout->addWidget(new QLabel("宽度:"));
+    m_widthEdit = new QLineEdit(QString::number(m_tcpImg.getImageWidth()));
+    m_widthEdit->setFixedWidth(80);
+    m_widthEdit->setToolTip("图像宽度 (1-8192)");
+    resolutionLayout->addWidget(m_widthEdit);
+    
+    // 高度设置
+    resolutionLayout->addWidget(new QLabel("高度:"));
+    m_heightEdit = new QLineEdit(QString::number(m_tcpImg.getImageHeight()));
+    m_heightEdit->setFixedWidth(80);
+    m_heightEdit->setToolTip("图像高度 (1-8192)");
+    resolutionLayout->addWidget(m_heightEdit);
+    
+    // 通道数设置
+    resolutionLayout->addWidget(new QLabel("通道:"));
+    m_channelsCombo = new QComboBox();
+    m_channelsCombo->addItem("1 (灰度)", 1);
+    m_channelsCombo->addItem("2 (双通道)", 2);
+    m_channelsCombo->addItem("3 (RGB)", 3);
+    m_channelsCombo->addItem("4 (RGBA)", 4);
+    m_channelsCombo->addItem("5 (5通道)", 5);
+    m_channelsCombo->addItem("6 (6通道)", 6);
+    m_channelsCombo->addItem("7 (7通道)", 7);
+    m_channelsCombo->addItem("8 (8通道)", 8);
+    
+    // 设置当前通道数
+    for (int i = 0; i < m_channelsCombo->count(); ++i) {
+        if (m_channelsCombo->itemData(i).toInt() == m_tcpImg.getImageChannels()) {
+            m_channelsCombo->setCurrentIndex(i);
+            break;
+        }
+    }
+    
+    m_channelsCombo->setFixedWidth(120);
+    m_channelsCombo->setToolTip("图像通道数 (1-8通道, 8位深度)\n多通道图像将提取第一通道显示");
+    resolutionLayout->addWidget(m_channelsCombo);
+    
+    // 应用按钮
+    m_applyResolutionBtn = new QPushButton("应用");
+    m_applyResolutionBtn->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }");
+    m_applyResolutionBtn->setToolTip("应用新的分辨率设置");
+    resolutionLayout->addWidget(m_applyResolutionBtn);
+    
+    // 重置按钮
+    m_resetResolutionBtn = new QPushButton("重置");
+    m_resetResolutionBtn->setToolTip("重置为默认分辨率");
+    resolutionLayout->addWidget(m_resetResolutionBtn);
+    
+    // 状态标签
+    m_resolutionStatusLabel = new QLabel();
+    updateResolutionStatus();
+    m_resolutionStatusLabel->setStyleSheet("QLabel { color: #666; font-size: 9pt; }");
+    resolutionLayout->addWidget(m_resolutionStatusLabel);
+    
+    // 连接信号槽
+    connect(m_applyResolutionBtn, &QPushButton::clicked, this, &Dialog::applyResolutionSettings);
+    connect(m_resetResolutionBtn, &QPushButton::clicked, this, &Dialog::resetResolutionToDefault);
+    
+    // 添加一些弹性空间
+    resolutionLayout->addStretch();
+    
+    QVBoxLayout* panelLayout = new QVBoxLayout();
+    panelLayout->addWidget(resolutionGroup);
+    
+    return panelLayout;
+}
+
+/**
+ * @brief 应用分辨率设置
+ */
+void Dialog::applyResolutionSettings()
+{
+    // 获取输入值
+    bool widthOk, heightOk;
+    int width = m_widthEdit->text().toInt(&widthOk);
+    int height = m_heightEdit->text().toInt(&heightOk);
+    int channels = m_channelsCombo->currentData().toInt();
+    
+    // 验证输入
+    if (!widthOk || width <= 0) {
+        ui->labelShowImg->setText("错误：图像宽度格式不正确");
+        return;
+    }
+    
+    if (!heightOk || height <= 0) {
+        ui->labelShowImg->setText("错误：图像高度格式不正确");
+        return;
+    }
+    
+    // 计算内存大小并提醒用户
+    long long totalBytes = (long long)width * height * channels;
+    if (totalBytes > 50 * 1024 * 1024) {
+        ui->labelShowImg->setText(QString("错误：图像数据过大\n需要 %1 MB 内存，超过50MB限制")
+                                  .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 1));
+        return;
+    }
+    
+    // 应用新的分辨率设置
+    if (m_tcpImg.setImageResolution(width, height, channels)) {
+        // 重新分配显示缓冲区
+        if (m_showBuffer != nullptr) {
+            delete[] m_showBuffer;
+        }
+        
+        try {
+            m_showBuffer = new char[totalBytes];
+            memset(m_showBuffer, 0, totalBytes);
+            
+                         updateResolutionStatus();
+             
+             QString channelInfo;
+             if (channels == 1) channelInfo = "灰度图像";
+             else if (channels == 3) channelInfo = "RGB彩色图像";
+             else if (channels == 4) channelInfo = "RGBA彩色图像";
+             else channelInfo = QString("%1通道图像(提取第一通道显示)").arg(channels);
+             
+             ui->labelShowImg->setText(QString("✅ 分辨率设置成功\n\n新设置：%1 x %2 x %3\n格式：8bit %4\n内存占用：%5 MB\n\n准备接收新的图像数据...")
+                                       .arg(width).arg(height).arg(channels)
+                                       .arg(channelInfo)
+                                       .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 2));
+                                      
+            qDebug() << "分辨率设置成功：" << width << "x" << height << "x" << channels;
+            
+        } catch (const std::bad_alloc&) {
+            ui->labelShowImg->setText("错误：显示缓冲区内存分配失败");
+            m_showBuffer = nullptr;
+        }
+    } else {
+        ui->labelShowImg->setText("错误：分辨率设置失败\n请检查输入参数");
+    }
+}
+
+/**
+ * @brief 重置分辨率为默认值
+ */
+void Dialog::resetResolutionToDefault()
+{
+    m_widthEdit->setText(QString::number(WIDTH));
+    m_heightEdit->setText(QString::number(HEIGHT));
+    
+    // 设置通道数
+    for (int i = 0; i < m_channelsCombo->count(); ++i) {
+        if (m_channelsCombo->itemData(i).toInt() == CHANLE) {
+            m_channelsCombo->setCurrentIndex(i);
+            break;
+        }
+    }
+    
+    // 自动应用默认设置
+    applyResolutionSettings();
+    
+    ui->labelShowImg->setText("✅ 已重置为默认分辨率\n\n准备接收图像数据...");
+    qDebug() << "分辨率已重置为默认值";
+}
+
+/**
+ * @brief 更新分辨率状态显示
+ */
+void Dialog::updateResolutionStatus()
+{
+    int width = m_tcpImg.getImageWidth();
+    int height = m_tcpImg.getImageHeight();
+    int channels = m_tcpImg.getImageChannels();
+    long long totalBytes = (long long)width * height * channels;
+    
+    QString statusText = QString("当前：%1x%2x%3 (8bit, %4 MB)")
+                        .arg(width).arg(height).arg(channels)
+                        .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 2);
+    
+    m_resolutionStatusLabel->setText(statusText);
 }

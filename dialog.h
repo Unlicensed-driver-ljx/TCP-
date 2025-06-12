@@ -115,6 +115,16 @@ private slots:
      */
     void refreshLocalIPAddresses();
 
+    /**
+     * @brief 应用分辨率设置
+     */
+    void applyResolutionSettings();
+
+    /**
+     * @brief 重置分辨率为默认值
+     */
+    void resetResolutionToDefault();
+
 private:
     Ui::Dialog *ui;          ///< UI界面指针，由Qt设计器生成的界面对象
     CTCPImg m_tcpImg;        ///< TCP图像传输对象，处理网络通信和数据接收
@@ -144,6 +154,14 @@ private:
     QLabel* m_debugStatusLabel;         ///< 调试状态标签
     QLabel* m_debugStatsLabel;          ///< 调试统计信息标签
     QCheckBox* m_timestampCheckBox;     ///< 时间戳显示选择
+    
+    // 分辨率设置相关控件
+    QLineEdit* m_widthEdit;             ///< 图像宽度输入框
+    QLineEdit* m_heightEdit;            ///< 图像高度输入框
+    QComboBox* m_channelsCombo;         ///< 图像通道数选择
+    QPushButton* m_applyResolutionBtn;  ///< 应用分辨率按钮
+    QPushButton* m_resetResolutionBtn;  ///< 重置分辨率按钮
+    QLabel* m_resolutionStatusLabel;    ///< 分辨率状态标签
 
     /**
      * @brief 初始化调试界面
@@ -166,6 +184,17 @@ private:
      * @brief 更新调试界面状态
      */
     void updateDebugUIState();
+
+    /**
+     * @brief 创建分辨率设置面板
+     * @return 分辨率设置面板布局
+     */
+    QLayout* createResolutionPanel();
+
+    /**
+     * @brief 更新分辨率状态显示
+     */
+    void updateResolutionStatus();
 };
 
 #endif // DIALOG_H

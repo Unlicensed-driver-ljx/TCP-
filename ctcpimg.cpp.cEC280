@@ -1,0 +1,108 @@
+#include "ctcpimg.h"
+
+CTCPImg::CTCPImg(QObject *parent)
+: QObject(parent)
+{
+    m_brefresh = false;
+    m_totalsize = 512*512*2;
+    frameBuffer = new char[512* 512 * sizeof(ushort)];
+    memset((void*)frameBuffer, 0, 512* 512 * sizeof(ushort));
+
+    TCP_sendMesSocket = NULL;
+    this->TCP_sendMesSocket = new QTcpSocket();
+    TCP_sendMesSocket->abort();
+
+    //成功连接服务器的connected()信号连接到slot_connected() (注意：不是connect()信号)
+    connect(TCP_sendMesSocket, SIGNAL(connected()), this, SLOT(slot_connected()));
+    //发送按钮的clicked()信号连接到slot_sendmessage()
+    //connect(ui->pushButton_send, SIGNAL(clicked()), this, SLOT(slot_sendmessage()));
+    //有新数据到达时的readyread()信号连接到slot_recvmessage()
+    connect(TCP_sendMesSocket, SIGNAL(readyRead()), this, SLOT(slot_recvmessage()));
+    //与服务器断开连接的disconnected()信号连接到slot_disconnect()
+    connect(TCP_sendMesSocket, SIGNAL(disconnected()), this, SLOT(slot_disconnect()));
+
+
+}
+
+CTCPImg::~CTCPImg(void)
+{
+   if(NULL != TCP_sendMesSocket)
+   {
+       delete[] TCP_sendMesSocket;
+       TCP_sendMesSocket = NULL;
+   }
+
+    if (frameBuffer != NULL)
+    {
+        delete[] frameBuffer;
+        frameBuffer = NULL;
+    }
+}
+
+void CTCPImg::start(QString strAddr, int port)
+{
+    this->TCP_sendMesSocket->connectToHost(QHostAddress(strAddr), port);
+}
+
+//处理成功连接到服务器的槽
+void CTCPImg::slot_connected()
+{
+    m_brefresh = true;
+}
+
+
+//发送消息到服务器的槽
+void CTCPImg::slot_sendmessage()
+{
+    //if (this->isconnetion)
+    //{
+    //	QString sendMessage = ui->lineEdit->text(); //从单行文本框获得要发送消息
+    //	if (!sendMessage.isEmpty())
+    //	{
+    //		//发送消息到服务器
+    //		this->TCP_sendMesSocket->write(sendMessage.toLatin1());
+    //		//本地显示发送的消息
+    //		QString localDispalyMessage = tr("send to server: ") + sendMessage \
+    //			+ QDateTime::currentDateTime().toString(" yyyy-M-dd hh:mm:ss") + tr("\n");
+    //		ui->textBrowser->append(localDispalyMessage);
+    //	}
+    //	else
+    //		QMessageBox::warning(this, "错误", "消息不能为空!", QMessageBox::Ok);
+    //}
+    //else
+    //	QMessageBox::warning(this, "错误", "未连接到服务器!", QMessageBox::Ok);
+
+    //ui->lineEdit->clear();
+}
+
+//接收来自服务器的消息的槽
+void CTCPImg::slot_recvmessage()
+{
+    //接收来自服务器的消息
+    QByteArray byteArray = this->TCP_sendMesSocket->readAll();
+    if (byteArray.contains("size=")) {
+        byteArray = byteArray.replace("size=", "");
+        m_totalsize = byteArray.toInt();
+        pictmp.clear();
+        TCP_sendMesSocket->write("OK");
+        TCP_sendMesSocket->waitForBytesWritten();
+    }
+    else
+    {
+        pictmp.append(byteArray);
+    }
+    if (pictmp.length() == m_totalsize)
+    {
+        memcpy(frameBuffer, pictmp.data(), 512*512 * sizeof(ushort));
+        emit tcpImgReadySig(frameBuffer);
+        TCP_sendMesSocket->write("OK");
+    }
+}
+
+//取消与服务器连接的槽
+void CTCPImg::slot_disconnect()
+{
+    m_brefresh = false;
+    TCP_sendMesSocket->close();
+    TCP_sendMesSocket->deleteLater();
+}
