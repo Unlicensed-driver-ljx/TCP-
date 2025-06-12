@@ -16,9 +16,12 @@
 #include <QRadioButton>
 #include <QCheckBox>
 #include <QTimer>
+#include <QProgressBar>
+#include <QVariantList>
 #include "sysdefine.h"
 #include "tcpdebugger.h"
 #include "dataformatter.h"
+#include "ui_dialog.h"
 
 namespace Ui {
 class Dialog;
@@ -80,6 +83,17 @@ public slots:
      */
     void onDebugConnectionStateChanged(CTCPDebugger::ConnectionState state, const QString& message);
 
+    /**
+     * @brief 执行服务端诊断
+     */
+    void performDiagnostics();
+    
+    /**
+     * @brief 显示诊断信息
+     * @param diagnosticInfo 诊断信息文本
+     */
+    void showDiagnosticInfo(const QString& diagnosticInfo);
+
 private slots:
     /**
      * @brief 启动网络调试
@@ -127,6 +141,12 @@ private slots:
     void resetResolutionToDefault();
     
     /**
+     * @brief 应用分辨率预设
+     * @param index 预设索引
+     */
+    void applyResolutionPreset(int index);
+
+    /**
      * @brief 手动重连槽函数
      */
     void manualReconnect();
@@ -169,7 +189,8 @@ private:
     // 分辨率设置相关控件
     QLineEdit* m_widthEdit;             ///< 图像宽度输入框
     QLineEdit* m_heightEdit;            ///< 图像高度输入框
-    QComboBox* m_channelsCombo;         ///< 图像通道数选择
+    QComboBox* m_channelsCombo;         ///< 通道数选择下拉框
+    QComboBox* m_resolutionPresetCombo; ///< 分辨率预设下拉框
     QPushButton* m_applyResolutionBtn;  ///< 应用分辨率按钮
     QPushButton* m_resetResolutionBtn;  ///< 重置分辨率按钮
     QLabel* m_resolutionStatusLabel;    ///< 分辨率状态标签
@@ -178,6 +199,10 @@ private:
     QPushButton* m_reconnectBtn;        ///< 手动重连按钮
     QCheckBox* m_autoReconnectCheckBox; ///< 自动重连开关
     QLabel* m_connectionStatusLabel;    ///< 连接状态标签
+    QLabel* m_reconnectProgressLabel;   ///< 重连进度标签
+    QProgressBar* m_reconnectProgressBar; ///< 重连进度条
+    QTimer* m_reconnectDisplayTimer;    ///< 重连显示更新定时器
+    QPushButton* m_diagnosticBtn;       ///< 诊断按钮
 
     /**
      * @brief 初始化调试界面
@@ -222,6 +247,16 @@ private:
      * @brief 更新连接状态显示
      */
     void updateConnectionStatus();
+
+    /**
+     * @brief 更新重连进度显示
+     */
+    void updateReconnectProgress();
+
+    /**
+     * @brief 设置统一的现代化样式表
+     */
+    void setUnifiedStyleSheet();
 };
 
 #endif // DIALOG_H

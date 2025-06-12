@@ -8,6 +8,7 @@
 #include <QHostAddress>
 #include <QNetworkProxy>
 #include <QTimer>
+#include <QDateTime>
 #include "sysdefine.h"
 
 /**
@@ -97,6 +98,63 @@ public:
      * 立即尝试重新连接到服务器
      */
     void reconnectNow();
+    
+    /**
+     * @brief 获取当前重连尝试次数
+     * @return 当前重连尝试次数
+     */
+    int getCurrentReconnectAttempts() const { return m_reconnectAttempts; }
+    
+    /**
+     * @brief 获取最大重连尝试次数
+     * @return 最大重连尝试次数
+     */
+    int getMaxReconnectAttempts() const { return m_maxReconnectAttempts; }
+    
+    /**
+     * @brief 获取重连间隔时间
+     * @return 重连间隔时间（毫秒）
+     */
+    int getReconnectInterval() const { return m_reconnectInterval; }
+    
+    /**
+     * @brief 检查是否正在重连
+     * @return 如果重连定时器正在运行返回true
+     */
+    bool isReconnecting() const { return m_reconnectTimer && m_reconnectTimer->isActive(); }
+    
+    /**
+     * @brief 获取重连定时器剩余时间
+     * @return 剩余时间（毫秒），如果定时器未运行返回-1
+     */
+    int getReconnectRemainingTime() const { 
+        return (m_reconnectTimer && m_reconnectTimer->isActive()) ? m_reconnectTimer->remainingTime() : -1; 
+    }
+
+    /**
+     * @brief 停止自动重连
+     */
+    void stopAutoReconnect();
+
+    /**
+     * @brief 执行服务端诊断检查
+     * 当重连失败后，检查服务端状态和网络连通性
+     */
+    void performServerDiagnostics();
+
+    /**
+     * @brief 检查网络连通性
+     * @param host 目标主机地址
+     * @param port 目标端口
+     * @return 连通性检查结果
+     */
+    QString checkNetworkConnectivity(const QString& host, int port);
+    
+    /**
+     * @brief 生成诊断报告
+     * @return 详细的诊断报告字符串
+     */
+    QString generateDiagnosticReport();
 
 public slots:
     /**
@@ -150,6 +208,18 @@ signals:
     * 通知界面层更新图像显示
     */
    void  tcpImgReadySig();
+   
+   /**
+    * @brief 图像数据接收信号
+    * @param imgData 接收到的图像数据
+    */
+   void signalImgData(QByteArray imgData);
+   
+   /**
+    * @brief 诊断信息更新信号
+    * @param diagnosticInfo 诊断信息文本
+    */
+   void signalDiagnosticInfo(QString diagnosticInfo);
 private:
    QTcpSocket* TCP_sendMesSocket;  ///< TCP套接字对象指针，用于网络通信
    bool m_brefresh;                ///< 刷新标志位，表示是否正在接收数据
@@ -201,6 +271,12 @@ private:
      * @return 帧头位置，-1表示未找到
      */
     int findFrameHeader(const QByteArray& data, const QByteArray& header);
+    
+    /**
+     * @brief 触发重连逻辑的内部函数
+     * @param source 触发源（用于调试日志）
+     */
+    void triggerReconnectLogic(const QString& source);
 };
 
 #endif // CTCPIMG_H

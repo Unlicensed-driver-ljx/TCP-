@@ -20,6 +20,9 @@ Dialog::Dialog(QWidget *parent) :
     // 设置窗口标题
     this->setWindowTitle("TCP图像传输接收程序 - 集成网络调试工具");
     
+    // 设置统一的现代化样式表
+    setUnifiedStyleSheet();
+    
     // 初始化网络调试器
     m_tcpDebugger = new CTCPDebugger(this);
     
@@ -73,6 +76,9 @@ Dialog::Dialog(QWidget *parent) :
 
     // 连接TCP图像数据就绪信号到图像显示槽函数
     connect(&m_tcpImg, &CTCPImg::tcpImgReadySig, this, &Dialog::showLabelImg);
+    
+    // 连接诊断信息信号
+    connect(&m_tcpImg, &CTCPImg::signalDiagnosticInfo, this, &Dialog::showDiagnosticInfo);
     
     // 初始化自动重连功能（默认启用）
     // 注意：这个调用必须在initDebugInterface()之后，因为控件需要先创建
@@ -748,7 +754,38 @@ void Dialog::refreshLocalIPAddresses()
 QLayout* Dialog::createResolutionPanel()
 {
     QGroupBox* resolutionGroup = new QGroupBox("图像分辨率设置");
-    QHBoxLayout* resolutionLayout = new QHBoxLayout(resolutionGroup);
+    QVBoxLayout* mainLayout = new QVBoxLayout(resolutionGroup);
+    
+    // 第一行：分辨率预设选择
+    QHBoxLayout* presetLayout = new QHBoxLayout();
+    presetLayout->addWidget(new QLabel("预设:"));
+    
+    m_resolutionPresetCombo = new QComboBox();
+    m_resolutionPresetCombo->addItem("自定义", QVariantList({0, 0}));
+    m_resolutionPresetCombo->addItem("640x480 (VGA)", QVariantList({640, 480}));
+    m_resolutionPresetCombo->addItem("800x600 (SVGA)", QVariantList({800, 600}));
+    m_resolutionPresetCombo->addItem("1024x768 (XGA)", QVariantList({1024, 768}));
+    m_resolutionPresetCombo->addItem("1280x720 (HD)", QVariantList({1280, 720}));
+    m_resolutionPresetCombo->addItem("1280x1024 (SXGA)", QVariantList({1280, 1024}));
+    m_resolutionPresetCombo->addItem("1600x1200 (UXGA)", QVariantList({1600, 1200}));
+    m_resolutionPresetCombo->addItem("1920x1080 (FHD)", QVariantList({1920, 1080}));
+    m_resolutionPresetCombo->addItem("2048x1536 (QXGA)", QVariantList({2048, 1536}));
+    m_resolutionPresetCombo->addItem("2560x1440 (QHD)", QVariantList({2560, 1440}));
+    m_resolutionPresetCombo->addItem("3840x2160 (4K)", QVariantList({3840, 2160}));
+    m_resolutionPresetCombo->addItem("640x2048 (线阵)", QVariantList({640, 2048}));
+    m_resolutionPresetCombo->addItem("1024x2048 (线阵)", QVariantList({1024, 2048}));
+    m_resolutionPresetCombo->addItem("2048x2048 (方形)", QVariantList({2048, 2048}));
+    m_resolutionPresetCombo->addItem("4096x4096 (大方形)", QVariantList({4096, 4096}));
+    
+    m_resolutionPresetCombo->setFixedWidth(180);
+    m_resolutionPresetCombo->setToolTip("选择常用分辨率预设，或选择'自定义'手动输入");
+    presetLayout->addWidget(m_resolutionPresetCombo);
+    presetLayout->addStretch();
+    
+    mainLayout->addLayout(presetLayout);
+    
+    // 第二行：手动输入分辨率
+    QHBoxLayout* resolutionLayout = new QHBoxLayout();
     
     // 宽度设置
     resolutionLayout->addWidget(new QLabel("宽度:"));
@@ -799,18 +836,34 @@ QLayout* Dialog::createResolutionPanel()
     m_resetResolutionBtn->setToolTip("重置为默认分辨率");
     resolutionLayout->addWidget(m_resetResolutionBtn);
     
-    // 状态标签
+    // 添加一些弹性空间
+    resolutionLayout->addStretch();
+    
+    mainLayout->addLayout(resolutionLayout);
+    
+    // 第三行：状态标签
     m_resolutionStatusLabel = new QLabel();
     updateResolutionStatus();
     m_resolutionStatusLabel->setStyleSheet("QLabel { color: #666; font-size: 9pt; }");
-    resolutionLayout->addWidget(m_resolutionStatusLabel);
+    mainLayout->addWidget(m_resolutionStatusLabel);
     
     // 连接信号槽
     connect(m_applyResolutionBtn, &QPushButton::clicked, this, &Dialog::applyResolutionSettings);
     connect(m_resetResolutionBtn, &QPushButton::clicked, this, &Dialog::resetResolutionToDefault);
+    connect(m_resolutionPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
+            this, &Dialog::applyResolutionPreset);
     
-    // 添加一些弹性空间
-    resolutionLayout->addStretch();
+    // 连接宽度和高度输入框的变化信号，自动设置预设为"自定义"
+    connect(m_widthEdit, &QLineEdit::textChanged, this, [this]() {
+        if (m_resolutionPresetCombo->currentIndex() != 0) {
+            m_resolutionPresetCombo->setCurrentIndex(0); // 设置为"自定义"
+        }
+    });
+    connect(m_heightEdit, &QLineEdit::textChanged, this, [this]() {
+        if (m_resolutionPresetCombo->currentIndex() != 0) {
+            m_resolutionPresetCombo->setCurrentIndex(0); // 设置为"自定义"
+        }
+    });
     
     QVBoxLayout* panelLayout = new QVBoxLayout();
     panelLayout->addWidget(resolutionGroup);
@@ -907,6 +960,58 @@ void Dialog::resetResolutionToDefault()
 }
 
 /**
+ * @brief 应用分辨率预设
+ * @param index 预设索引
+ */
+void Dialog::applyResolutionPreset(int index)
+{
+    if (index == 0) {
+        // 选择了"自定义"，不做任何操作
+        qDebug() << "用户选择自定义分辨率";
+        return;
+    }
+    
+    // 获取预设的分辨率数据
+    QVariantList resolution = m_resolutionPresetCombo->itemData(index).toList();
+    if (resolution.size() != 2) {
+        qDebug() << "错误：分辨率预设数据格式不正确";
+        return;
+    }
+    
+    int width = resolution[0].toInt();
+    int height = resolution[1].toInt();
+    
+    qDebug() << QString("应用分辨率预设：%1x%2").arg(width).arg(height);
+    
+    // 临时断开信号连接，避免触发"自定义"设置
+    disconnect(m_widthEdit, &QLineEdit::textChanged, nullptr, nullptr);
+    disconnect(m_heightEdit, &QLineEdit::textChanged, nullptr, nullptr);
+    
+    // 更新输入框的值
+    m_widthEdit->setText(QString::number(width));
+    m_heightEdit->setText(QString::number(height));
+    
+    // 重新连接信号
+    connect(m_widthEdit, &QLineEdit::textChanged, this, [this]() {
+        if (m_resolutionPresetCombo->currentIndex() != 0) {
+            m_resolutionPresetCombo->setCurrentIndex(0); // 设置为"自定义"
+        }
+    });
+    connect(m_heightEdit, &QLineEdit::textChanged, this, [this]() {
+        if (m_resolutionPresetCombo->currentIndex() != 0) {
+            m_resolutionPresetCombo->setCurrentIndex(0); // 设置为"自定义"
+        }
+    });
+    
+    // 自动应用新的分辨率设置
+    applyResolutionSettings();
+    
+    QString presetName = m_resolutionPresetCombo->currentText();
+    ui->labelShowImg->setText(QString("✅ 已应用分辨率预设：%1\n\n准备接收图像数据...").arg(presetName));
+    qDebug() << QString("分辨率预设已应用：%1 (%2x%3)").arg(presetName).arg(width).arg(height);
+}
+
+/**
  * @brief 更新分辨率状态显示
  */
 void Dialog::updateResolutionStatus()
@@ -929,38 +1034,83 @@ void Dialog::updateResolutionStatus()
  */
 QLayout* Dialog::createReconnectPanel()
 {
-    QGroupBox* reconnectGroup = new QGroupBox("连接控制");
-    QHBoxLayout* reconnectLayout = new QHBoxLayout(reconnectGroup);
+    QGroupBox* reconnectGroup = new QGroupBox("🔗 连接控制");
+    QVBoxLayout* mainLayout = new QVBoxLayout(reconnectGroup);
+    
+    // 第一行：连接状态和控制按钮
+    QHBoxLayout* controlLayout = new QHBoxLayout();
     
     // 连接状态标签
     m_connectionStatusLabel = new QLabel("状态：未连接");
-    m_connectionStatusLabel->setStyleSheet("QLabel { font-weight: bold; color: #666; }");
+    m_connectionStatusLabel->setStyleSheet("QLabel { font-weight: bold; color: #666; padding: 4px 8px; border-radius: 3px; background-color: #f0f0f0; }");
     
     // 自动重连开关
-    m_autoReconnectCheckBox = new QCheckBox("自动重连");
+    m_autoReconnectCheckBox = new QCheckBox("🔄 自动重连");
     m_autoReconnectCheckBox->setChecked(true);  // 默认启用
-    m_autoReconnectCheckBox->setToolTip("启用后，连接断开时会自动尝试重连");
+    m_autoReconnectCheckBox->setToolTip("启用后，连接断开时会自动尝试重连\n最大5次尝试，间隔3秒");
     
     // 手动重连按钮
-    m_reconnectBtn = new QPushButton("立即重连");
+    m_reconnectBtn = new QPushButton("🚀 立即重连");
     m_reconnectBtn->setEnabled(false);  // 初始状态禁用
     m_reconnectBtn->setToolTip("手动触发重连，会重置重连计数");
-    m_reconnectBtn->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }");
+    
+    // 诊断按钮
+    m_diagnosticBtn = new QPushButton("🔍 诊断");
+    m_diagnosticBtn->setEnabled(true);
+    m_diagnosticBtn->setToolTip("检查服务端状态和网络连通性");
+    
+    controlLayout->addWidget(m_connectionStatusLabel);
+    controlLayout->addWidget(m_autoReconnectCheckBox);
+    controlLayout->addWidget(m_reconnectBtn);
+    controlLayout->addWidget(m_diagnosticBtn);
+    controlLayout->addStretch();
+    
+    // 第二行：重连进度显示
+    QHBoxLayout* progressLayout = new QHBoxLayout();
+    
+    // 重连进度标签
+    m_reconnectProgressLabel = new QLabel("重连状态：待机");
+    m_reconnectProgressLabel->setStyleSheet("QLabel { color: #666; font-size: 9pt; }");
+    
+    // 重连进度条
+    m_reconnectProgressBar = new QProgressBar();
+    m_reconnectProgressBar->setVisible(false);  // 初始隐藏
+    m_reconnectProgressBar->setMaximum(100);
+    m_reconnectProgressBar->setTextVisible(true);
+    m_reconnectProgressBar->setStyleSheet(R"(
+        QProgressBar {
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+            background-color: #f0f0f0;
+        }
+        QProgressBar::chunk {
+            background-color: #FF9800;
+            border-radius: 3px;
+        }
+    )");
+    
+    progressLayout->addWidget(m_reconnectProgressLabel);
+    progressLayout->addWidget(m_reconnectProgressBar);
+    
+    // 添加到主布局
+    mainLayout->addLayout(controlLayout);
+    mainLayout->addLayout(progressLayout);
     
     // 连接信号
     connect(m_autoReconnectCheckBox, &QCheckBox::toggled, this, &Dialog::toggleAutoReconnect);
     connect(m_reconnectBtn, &QPushButton::clicked, this, &Dialog::manualReconnect);
-    
-    // 布局
-    reconnectLayout->addWidget(m_connectionStatusLabel);
-    reconnectLayout->addWidget(m_autoReconnectCheckBox);
-    reconnectLayout->addWidget(m_reconnectBtn);
-    reconnectLayout->addStretch();  // 添加弹性空间
+    connect(m_diagnosticBtn, &QPushButton::clicked, this, &Dialog::performDiagnostics);
     
     // 启动定时器定期更新连接状态
     QTimer* statusTimer = new QTimer(this);
     connect(statusTimer, &QTimer::timeout, this, &Dialog::updateConnectionStatus);
     statusTimer->start(1000);  // 每秒更新一次状态
+    
+    // 重连进度显示定时器
+    m_reconnectDisplayTimer = new QTimer(this);
+    connect(m_reconnectDisplayTimer, &QTimer::timeout, this, &Dialog::updateReconnectProgress);
     
     // 创建一个垂直布局来包装GroupBox
     QVBoxLayout* panelLayout = new QVBoxLayout();
@@ -982,43 +1132,44 @@ void Dialog::updateConnectionStatus()
     
     switch (state) {
         case QAbstractSocket::UnconnectedState:
-            statusText = "状态：未连接";
-            styleSheet = "QLabel { font-weight: bold; color: #666; }";
+            statusText = "🔴 未连接";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #666; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(true);
             break;
         case QAbstractSocket::HostLookupState:
-            statusText = "状态：查找主机...";
-            styleSheet = "QLabel { font-weight: bold; color: #FF9800; }";
+            statusText = "🔍 查找主机...";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #FF9800; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
             break;
         case QAbstractSocket::ConnectingState:
-            statusText = "状态：连接中...";
-            styleSheet = "QLabel { font-weight: bold; color: #FF9800; }";
+            statusText = "🔄 连接中...";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #FF9800; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
             break;
         case QAbstractSocket::ConnectedState:
-            statusText = "状态：已连接 ✅";
-            styleSheet = "QLabel { font-weight: bold; color: #4CAF50; }";
+            statusText = "🟢 已连接";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #4CAF50; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            // 连接成功时隐藏进度条
+            if (m_reconnectProgressBar) {
+                m_reconnectProgressBar->setVisible(false);
+                m_reconnectProgressLabel->setText("重连状态：连接正常");
+                if (m_reconnectDisplayTimer) m_reconnectDisplayTimer->stop();
+            }
             break;
         case QAbstractSocket::BoundState:
-            statusText = "状态：已绑定";
-            styleSheet = "QLabel { font-weight: bold; color: #2196F3; }";
+            statusText = "🔗 已绑定";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #2196F3; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
             break;
         case QAbstractSocket::ClosingState:
-            statusText = "状态：断开中...";
-            styleSheet = "QLabel { font-weight: bold; color: #FF5722; }";
-            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
-            break;
-        case QAbstractSocket::ListeningState:
-            statusText = "状态：监听中";
-            styleSheet = "QLabel { font-weight: bold; color: #9C27B0; }";
+            statusText = "🔄 断开中...";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #FF5722; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
             break;
         default:
-            statusText = "状态：未知";
-            styleSheet = "QLabel { font-weight: bold; color: #666; }";
+            statusText = "❓ 未知状态";
+            styleSheet = "QLabel { font-weight: bold; color: white; background-color: #9E9E9E; padding: 4px 8px; border-radius: 3px; }";
             if (m_reconnectBtn) m_reconnectBtn->setEnabled(true);
             break;
     }
@@ -1032,17 +1183,37 @@ void Dialog::updateConnectionStatus()
  */
 void Dialog::manualReconnect()
 {
-    qDebug() << "用户手动触发重连";
+    qDebug() << "用户触发手动重连";
     
-    // 更新界面状态
-    ui->labelShowImg->setText("手动重连中...\n正在尝试重新连接到服务器");
-    ui->pushButtonStart->setEnabled(false);
+    // 更新界面显示
+    if (m_reconnectProgressLabel) {
+        m_reconnectProgressLabel->setText("🚀 手动重连中...");
+    }
+    if (m_reconnectProgressBar) {
+        m_reconnectProgressBar->setVisible(true);
+        m_reconnectProgressBar->setValue(0);
+        m_reconnectProgressBar->setFormat("正在重连...");
+    }
+    
+    // 启动进度更新定时器
+    if (m_reconnectDisplayTimer && !m_reconnectDisplayTimer->isActive()) {
+        m_reconnectDisplayTimer->start(100);
+    }
     
     // 触发重连
     m_tcpImg.reconnectNow();
     
-    // 更新连接状态显示
-    updateConnectionStatus();
+    // 暂时禁用重连按钮，防止重复点击
+    if (m_reconnectBtn) {
+        m_reconnectBtn->setEnabled(false);
+        
+        // 3秒后重新启用按钮
+        QTimer::singleShot(3000, this, [this]() {
+            if (m_reconnectBtn && m_tcpImg.getConnectionState() != QAbstractSocket::ConnectedState) {
+                m_reconnectBtn->setEnabled(true);
+            }
+        });
+    }
 }
 
 /**
@@ -1056,12 +1227,408 @@ void Dialog::toggleAutoReconnect(bool enabled)
     // 设置TCP图像对象的自动重连参数
     m_tcpImg.setAutoReconnect(enabled, 5, 3000);  // 最大5次，间隔3秒
     
-    // 更新界面提示
-    QString tooltip = enabled ? 
-        "自动重连已启用\n连接断开时会自动尝试重连（最多5次，间隔3秒）" : 
-        "自动重连已禁用\n连接断开时需要手动重连";
-    
-    if (m_autoReconnectCheckBox) {
-        m_autoReconnectCheckBox->setToolTip(tooltip);
+    // 更新界面显示
+    if (m_reconnectProgressLabel) {
+        if (enabled) {
+            QAbstractSocket::SocketState state = m_tcpImg.getConnectionState();
+            if (state == QAbstractSocket::ConnectedState) {
+                m_reconnectProgressLabel->setText("✅ 连接正常");
+            } else {
+                m_reconnectProgressLabel->setText("⏳ 自动重连已启用");
+            }
+        } else {
+            m_reconnectProgressLabel->setText("🚫 自动重连已禁用");
+            if (m_reconnectProgressBar) {
+                m_reconnectProgressBar->setVisible(false);
+            }
+            if (m_reconnectDisplayTimer && m_reconnectDisplayTimer->isActive()) {
+                m_reconnectDisplayTimer->stop();
+            }
+        }
     }
+    
+    // 如果禁用自动重连，停止当前的重连尝试
+    if (!enabled) {
+        m_tcpImg.stopReconnect();
+    }
+    
+    qDebug() << "自动重连状态已更新：" << (enabled ? "启用" : "禁用");
+}
+
+/**
+ * @brief 执行服务端诊断
+ */
+void Dialog::performDiagnostics()
+{
+    qDebug() << "用户手动触发服务端诊断";
+    
+    // 更新界面显示
+    if (m_reconnectProgressLabel) {
+        m_reconnectProgressLabel->setText("🔍 正在执行服务端诊断...");
+    }
+    
+    // 暂时禁用诊断按钮，防止重复点击
+    if (m_diagnosticBtn) {
+        m_diagnosticBtn->setEnabled(false);
+        m_diagnosticBtn->setText("🔍 诊断中...");
+    }
+    
+    // 在主图像显示区域显示诊断提示
+    ui->labelShowImg->setText("🔍 正在执行服务端诊断检查...\n\n请稍候，正在检测网络连通性和服务端状态...");
+    
+    // 异步执行诊断，避免阻塞UI
+    QTimer::singleShot(100, this, [this]() {
+        // 调用CTCPImg的诊断功能（会通过信号显示结果）
+        m_tcpImg.performServerDiagnostics();
+        
+        // 更新界面显示
+        if (m_reconnectProgressLabel) {
+            m_reconnectProgressLabel->setText("✅ 诊断完成 | 详细信息已显示在图像区域");
+        }
+        
+        // 重新启用诊断按钮
+        if (m_diagnosticBtn) {
+            m_diagnosticBtn->setEnabled(true);
+            m_diagnosticBtn->setText("🔍 诊断");
+        }
+    });
+}
+
+/**
+ * @brief 更新重连进度显示
+ * 
+ * 显示重连的实时进度，包括当前尝试次数、剩余时间等
+ */
+void Dialog::updateReconnectProgress()
+{
+    if (!m_reconnectProgressLabel || !m_reconnectProgressBar) return;
+    
+    QAbstractSocket::SocketState state = m_tcpImg.getConnectionState();
+    bool isReconnecting = m_tcpImg.isReconnecting();
+    int currentAttempts = m_tcpImg.getCurrentReconnectAttempts();
+    int maxAttempts = m_tcpImg.getMaxReconnectAttempts();
+    int remainingTime = m_tcpImg.getReconnectRemainingTime();
+    int interval = m_tcpImg.getReconnectInterval();
+    
+    if (state == QAbstractSocket::ConnectedState) {
+        // 连接成功
+        m_reconnectProgressBar->setVisible(false);
+        m_reconnectProgressLabel->setText("✅ 连接正常");
+        if (m_reconnectDisplayTimer && m_reconnectDisplayTimer->isActive()) {
+            m_reconnectDisplayTimer->stop();
+        }
+    } else if (state == QAbstractSocket::ConnectingState) {
+        // 正在连接
+        m_reconnectProgressLabel->setText("🔄 正在尝试连接...");
+        m_reconnectProgressBar->setVisible(true);
+        m_reconnectProgressBar->setValue(50);
+        m_reconnectProgressBar->setFormat("连接中...");
+    } else if (isReconnecting && remainingTime > 0) {
+        // 正在重连等待中
+        m_reconnectProgressBar->setVisible(true);
+        
+        QString progressText = QString("🔄 重连中 (第%1/%2次) - %3秒后重试")
+                              .arg(currentAttempts)
+                              .arg(maxAttempts)
+                              .arg(remainingTime / 1000 + 1); // 转换为秒并向上取整
+        
+        m_reconnectProgressLabel->setText(progressText);
+        
+        // 计算进度百分比
+        int totalTime = interval; // 总间隔时间
+        int elapsedTime = totalTime - remainingTime;
+        int progress = (elapsedTime * 100) / totalTime;
+        
+        m_reconnectProgressBar->setValue(progress);
+        m_reconnectProgressBar->setFormat(QString("%1秒后重试").arg(remainingTime / 1000 + 1));
+        
+        // 启动进度更新定时器（如果还没启动）
+        if (m_reconnectDisplayTimer && !m_reconnectDisplayTimer->isActive()) {
+            m_reconnectDisplayTimer->start(100); // 每100ms更新一次进度
+        }
+    } else if (currentAttempts >= maxAttempts && !isReconnecting) {
+        // 重连失败
+        m_reconnectProgressBar->setVisible(false);
+        m_reconnectProgressLabel->setText(QString("🔍 重连失败：正在诊断服务端状态..."));
+        if (m_reconnectDisplayTimer && m_reconnectDisplayTimer->isActive()) {
+            m_reconnectDisplayTimer->stop();
+        }
+        
+        // 延迟显示诊断结果，给用户一个"正在诊断"的感觉
+        QTimer::singleShot(2000, this, [this, maxAttempts]() {
+            if (m_reconnectProgressLabel) {
+                m_reconnectProgressLabel->setText(QString("❌ 连接失败：已尝试%1次 | 🔍 请检查服务端和采集端状态").arg(maxAttempts));
+            }
+        });
+    } else if (state == QAbstractSocket::UnconnectedState && m_autoReconnectCheckBox->isChecked()) {
+        // 未连接但启用了自动重连
+        if (currentAttempts == 0) {
+            m_reconnectProgressLabel->setText("⏳ 等待重连触发...");
+            m_reconnectProgressBar->setVisible(false);
+        } else {
+            m_reconnectProgressLabel->setText(QString("🔄 准备第%1次重连...").arg(currentAttempts + 1));
+            m_reconnectProgressBar->setVisible(false);
+        }
+    } else {
+        // 其他状态
+        m_reconnectProgressBar->setVisible(false);
+        if (m_autoReconnectCheckBox->isChecked()) {
+            m_reconnectProgressLabel->setText("⏸️ 重连待机");
+        } else {
+            m_reconnectProgressLabel->setText("🚫 自动重连已禁用");
+        }
+        if (m_reconnectDisplayTimer && m_reconnectDisplayTimer->isActive()) {
+            m_reconnectDisplayTimer->stop();
+        }
+    }
+}
+
+/**
+ * @brief 设置统一的现代化样式表
+ * 
+ * 为整个应用程序设置一致的现代化UI风格，包括：
+ * - 统一的颜色方案
+ * - 现代化的按钮样式
+ * - 清晰的输入框样式
+ * - 美观的状态指示器
+ */
+void Dialog::setUnifiedStyleSheet()
+{
+    QString styleSheet = R"(
+        /* 主窗口样式 */
+        QDialog {
+            background-color: #f5f5f5;
+            font-family: "Microsoft YaHei", "SimHei", sans-serif;
+            font-size: 9pt;
+        }
+        
+        /* 按钮统一样式 */
+        QPushButton {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            min-width: 80px;
+        }
+        
+        QPushButton:hover {
+            background-color: #45a049;
+        }
+        
+        QPushButton:pressed {
+            background-color: #3d8b40;
+        }
+        
+        QPushButton:disabled {
+            background-color: #cccccc;
+            color: #666666;
+        }
+        
+        /* 特殊按钮样式 */
+        QPushButton#pushButtonDebug {
+            background-color: #2196F3;
+        }
+        
+        QPushButton#pushButtonDebug:hover {
+            background-color: #1976D2;
+        }
+        
+        /* 重连按钮样式 */
+        QPushButton[objectName*="reconnect"] {
+            background-color: #FF9800;
+        }
+        
+        QPushButton[objectName*="reconnect"]:hover {
+            background-color: #F57C00;
+        }
+        
+        /* 输入框统一样式 */
+        QLineEdit {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            padding: 6px 8px;
+            background-color: white;
+            selection-background-color: #4CAF50;
+        }
+        
+        QLineEdit:focus {
+            border-color: #4CAF50;
+            outline: none;
+        }
+        
+        /* 标签样式 */
+        QLabel {
+            color: #333333;
+        }
+        
+        /* 状态标签特殊样式 */
+        QLabel[objectName*="Status"] {
+            font-weight: bold;
+            padding: 4px 8px;
+            border-radius: 3px;
+            background-color: white;
+            border: 1px solid #ddd;
+        }
+        
+        /* 复选框样式 */
+        QCheckBox {
+            spacing: 8px;
+        }
+        
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 2px solid #ddd;
+            background-color: white;
+        }
+        
+        QCheckBox::indicator:checked {
+            background-color: #4CAF50;
+            border-color: #4CAF50;
+            image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
+        }
+        
+        /* 下拉框样式 */
+        QComboBox {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            padding: 6px 8px;
+            background-color: white;
+            min-width: 100px;
+        }
+        
+        QComboBox:focus {
+            border-color: #4CAF50;
+        }
+        
+        QComboBox::drop-down {
+            border: none;
+            width: 20px;
+        }
+        
+        QComboBox::down-arrow {
+            image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDFMNiA2TDExIDEiIHN0cm9rZT0iIzY2NjY2NiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPHN2Zz4K);
+        }
+        
+        /* 文本编辑区域样式 */
+        QTextEdit {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+            selection-background-color: #4CAF50;
+        }
+        
+        QTextEdit:focus {
+            border-color: #4CAF50;
+        }
+        
+        /* 标签页样式 */
+        QTabWidget::pane {
+            border: 1px solid #ddd;
+            background-color: white;
+            border-radius: 4px;
+        }
+        
+        QTabBar::tab {
+            background-color: #e0e0e0;
+            padding: 8px 16px;
+            margin-right: 2px;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+        }
+        
+        QTabBar::tab:selected {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        QTabBar::tab:hover:!selected {
+            background-color: #f0f0f0;
+        }
+        
+        /* 分组框样式 */
+        QGroupBox {
+            font-weight: bold;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+            padding-top: 10px;
+            background-color: white;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 8px 0 8px;
+            color: #4CAF50;
+        }
+        
+        /* 单选按钮样式 */
+        QRadioButton {
+            spacing: 8px;
+        }
+        
+        QRadioButton::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+            background-color: white;
+        }
+        
+        QRadioButton::indicator:checked {
+            background-color: #4CAF50;
+            border-color: #4CAF50;
+        }
+        
+        QRadioButton::indicator:checked::after {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background-color: white;
+            position: absolute;
+            top: 3px;
+            left: 3px;
+        }
+    )";
+    
+    this->setStyleSheet(styleSheet);
+    qDebug() << "统一样式表已应用";
+}
+
+/**
+ * @brief 显示诊断信息
+ * @param diagnosticInfo 诊断信息文本
+ */
+void Dialog::showDiagnosticInfo(const QString& diagnosticInfo)
+{
+    // 在图像显示区域显示诊断信息
+    ui->labelShowImg->setText(diagnosticInfo);
+    
+    // 设置文本对齐方式为左上角对齐，便于阅读长文本
+    ui->labelShowImg->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    
+    // 设置文本自动换行
+    ui->labelShowImg->setWordWrap(true);
+    
+    // 设置字体为等宽字体，保持格式对齐
+    QFont font("Consolas, Monaco, monospace");
+    font.setPointSize(9);
+    ui->labelShowImg->setFont(font);
+    
+    // 设置背景色为浅灰色，便于阅读
+    ui->labelShowImg->setStyleSheet(
+        "QLabel {"
+        "    background-color: #f5f5f5;"
+        "    border: 1px solid #ddd;"
+        "    padding: 10px;"
+        "    color: #333;"
+        "}"
+    );
+    
+    qDebug() << "诊断信息已显示在界面上";
 }

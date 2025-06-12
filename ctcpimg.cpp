@@ -76,12 +76,12 @@ CTCPImg::~CTCPImg(void)
     }
     
     // 修复：正确释放QTcpSocket对象
-    if(NULL != TCP_sendMesSocket)
-    {
+   if(NULL != TCP_sendMesSocket)
+   {
         TCP_sendMesSocket->disconnectFromHost();  // 优雅断开连接
         TCP_sendMesSocket->deleteLater();         // 使用deleteLater()安全删除
-        TCP_sendMesSocket = NULL;
-    }
+       TCP_sendMesSocket = NULL;
+   }
 
     // 修复：使用delete[]释放数组内存
     if (frameBuffer != NULL)
@@ -157,13 +157,27 @@ void CTCPImg::slot_connected()
     m_brefresh = true;
     pictmp.clear();  // 清空接收缓冲区
     
+    qDebug() << "✅ [连接调试] TCP连接建立成功，准备接收图像数据";
+    qDebug() << "✅ [连接调试] 连接到服务器：" << m_serverAddress << ":" << m_serverPort;
+    qDebug() << "✅ [连接调试] 套接字状态：" << TCP_sendMesSocket->state();
+    qDebug() << "✅ [连接调试] 本地地址：" << TCP_sendMesSocket->localAddress().toString() << ":" << TCP_sendMesSocket->localPort();
+    qDebug() << "✅ [连接调试] 远程地址：" << TCP_sendMesSocket->peerAddress().toString() << ":" << TCP_sendMesSocket->peerPort();
+    
     // 连接成功，重置重连计数
+    int previousAttempts = m_reconnectAttempts;
     m_reconnectAttempts = 0;
+    
     if (m_reconnectTimer->isActive()) {
+        qDebug() << "✅ [连接调试] 停止重连定时器";
         m_reconnectTimer->stop();
     }
     
-    qDebug() << "✅ TCP连接建立成功，准备接收图像数据";
+    if (previousAttempts > 0) {
+        qDebug() << QString("✅ [连接调试] 重连成功！经过 %1 次尝试后连接建立").arg(previousAttempts);
+    } else {
+        qDebug() << "✅ [连接调试] 首次连接成功";
+    }
+    
     qDebug() << "🔄 重连计数已重置，当前连接状态：已连接";
 }
 
@@ -196,7 +210,7 @@ void CTCPImg::slot_recvmessage()
     }
     
     QByteArray byteArray = this->TCP_sendMesSocket->readAll();
-    
+
     // 数据有效性检查
     if (byteArray.isEmpty()) {
         qDebug() << "警告：接收到空数据包";
@@ -411,7 +425,7 @@ void CTCPImg::slot_recvmessage()
 /**
  * @brief TCP连接断开的槽函数
  * 
- * 处理TCP连接断开事件，清理相关状态
+ * 当TCP连接断开时被调用，清理连接状态并启动自动重连（如果启用）
  */
 void CTCPImg::slot_disconnect()
 {
@@ -419,34 +433,20 @@ void CTCPImg::slot_disconnect()
     pictmp.clear();  // 清空接收缓冲区
     
     qDebug() << "❌ TCP连接已断开，清理连接状态";
+    qDebug() << "🔄 [断开调试] 当前自动重连状态：" << (m_autoReconnectEnabled ? "启用" : "禁用");
+    qDebug() << "🔄 [断开调试] 服务器地址：" << m_serverAddress;
+    qDebug() << "🔄 [断开调试] 服务器端口：" << m_serverPort;
+    qDebug() << "🔄 [断开调试] 当前重连尝试次数：" << m_reconnectAttempts;
+    qDebug() << "🔄 [断开调试] 最大重连尝试次数：" << m_maxReconnectAttempts;
     
     // 安全关闭连接
     if (TCP_sendMesSocket->state() != QAbstractSocket::UnconnectedState) {
-        TCP_sendMesSocket->close();
+        qDebug() << "🔄 [断开调试] 套接字状态不是未连接，执行close()";
+    TCP_sendMesSocket->close();
     }
     
-    // 如果启用了自动重连且有有效的服务器地址
-    if (m_autoReconnectEnabled && !m_serverAddress.isEmpty() && m_serverPort > 0) {
-        if (m_reconnectAttempts < m_maxReconnectAttempts) {
-            m_reconnectAttempts++;
-            qDebug() << QString("🔄 准备自动重连 (第%1/%2次尝试)，%3秒后开始...")
-                        .arg(m_reconnectAttempts)
-                        .arg(m_maxReconnectAttempts)
-                        .arg(m_reconnectInterval / 1000.0);
-            
-            // 启动重连定时器
-            m_reconnectTimer->start(m_reconnectInterval);
-        } else {
-            qDebug() << QString("❌ 已达到最大重连次数 (%1次)，停止自动重连").arg(m_maxReconnectAttempts);
-            qDebug() << "💡 您可以手动点击连接按钮重新尝试连接";
-        }
-    } else {
-        if (!m_autoReconnectEnabled) {
-            qDebug() << "🔄 自动重连已禁用";
-        } else {
-            qDebug() << "❌ 缺少有效的服务器连接参数，无法自动重连";
-        }
-    }
+    // 触发重连逻辑
+    triggerReconnectLogic("断开调试");
 }
 
 /**
@@ -458,6 +458,12 @@ void CTCPImg::slot_disconnect()
 void CTCPImg::slot_socketError(QAbstractSocket::SocketError error)
 {
     QString errorString;
+    
+    qDebug() << "❌ [错误调试] TCP套接字错误发生";
+    qDebug() << "❌ [错误调试] 错误代码：" << error;
+    qDebug() << "❌ [错误调试] 套接字状态：" << TCP_sendMesSocket->state();
+    qDebug() << "❌ [错误调试] 尝试连接的服务器：" << m_serverAddress << ":" << m_serverPort;
+    qDebug() << "❌ [错误调试] 当前重连尝试次数：" << m_reconnectAttempts;
     
     // 根据错误类型提供中文错误描述
     switch (error) {
@@ -484,12 +490,37 @@ void CTCPImg::slot_socketError(QAbstractSocket::SocketError error)
             break;
     }
     
-    qDebug() << "TCP连接错误：" << errorString;
-    qDebug() << "详细错误信息：" << TCP_sendMesSocket->errorString();
+    qDebug() << "❌ [错误调试] TCP连接错误：" << errorString;
+    qDebug() << "❌ [错误调试] 详细错误信息：" << TCP_sendMesSocket->errorString();
     
     // 重置连接状态
     m_brefresh = false;
     pictmp.clear();
+    
+    // 对于连接失败的错误，需要主动触发重连逻辑
+    // 因为这些错误可能不会触发disconnected()信号
+    bool shouldTriggerReconnect = false;
+    switch (error) {
+        case QAbstractSocket::ConnectionRefusedError:
+        case QAbstractSocket::HostNotFoundError:
+        case QAbstractSocket::SocketTimeoutError:
+        case QAbstractSocket::NetworkError:
+            shouldTriggerReconnect = true;
+            qDebug() << "❌ [错误调试] 连接失败类型错误，需要主动触发重连";
+            break;
+        case QAbstractSocket::RemoteHostClosedError:
+            // 这种情况通常会触发disconnected()信号，不需要主动重连
+            qDebug() << "❌ [错误调试] 远程主机关闭连接，等待disconnect信号触发重连逻辑";
+            break;
+        default:
+            qDebug() << "❌ [错误调试] 其他类型错误，等待disconnect信号触发重连逻辑";
+            break;
+    }
+    
+    // 如果需要主动触发重连
+    if (shouldTriggerReconnect) {
+        triggerReconnectLogic("错误调试");
+    }
 }
 
 /**
@@ -699,6 +730,8 @@ int CTCPImg::findFrameHeader(const QByteArray& data, const QByteArray& header)
  */
 void CTCPImg::slot_reconnect()
 {
+    qDebug() << "🔄 [重连调试] slot_reconnect() 被调用";
+    
     if (!m_autoReconnectEnabled) {
         qDebug() << "🔄 自动重连已禁用，停止重连尝试";
         return;
@@ -706,30 +739,242 @@ void CTCPImg::slot_reconnect()
     
     if (m_serverAddress.isEmpty() || m_serverPort <= 0) {
         qDebug() << "❌ 无效的服务器连接参数，无法重连";
+        qDebug() << "   服务器地址：" << m_serverAddress;
+        qDebug() << "   服务器端口：" << m_serverPort;
         return;
     }
     
     // 检查当前连接状态
-    if (TCP_sendMesSocket->state() == QAbstractSocket::ConnectedState) {
+    QAbstractSocket::SocketState currentState = TCP_sendMesSocket->state();
+    qDebug() << "🔄 [重连调试] 当前套接字状态：" << currentState;
+    
+    if (currentState == QAbstractSocket::ConnectedState) {
         qDebug() << "✅ 连接已建立，取消重连";
         return;
     }
     
-    qDebug() << QString("🔄 开始第%1次重连尝试，连接到 %2:%3")
+    qDebug() << QString("🔄 [重连调试] 开始第%1次重连尝试，连接到 %2:%3")
                 .arg(m_reconnectAttempts)
                 .arg(m_serverAddress)
                 .arg(m_serverPort);
     
     // 确保套接字处于未连接状态
-    if (TCP_sendMesSocket->state() != QAbstractSocket::UnconnectedState) {
+    if (currentState != QAbstractSocket::UnconnectedState) {
+        qDebug() << "🔄 [重连调试] 套接字状态不是未连接，执行abort()";
         TCP_sendMesSocket->abort();
+        qDebug() << "🔄 [重连调试] abort()后的套接字状态：" << TCP_sendMesSocket->state();
     }
     
     // 禁用代理
     TCP_sendMesSocket->setProxy(QNetworkProxy::NoProxy);
     
+    qDebug() << "🔄 [重连调试] 正在调用 connectToHost()...";
+    
     // 尝试重新连接
     TCP_sendMesSocket->connectToHost(QHostAddress(m_serverAddress), m_serverPort);
+    
+    qDebug() << "🔄 [重连调试] connectToHost() 调用完成";
+    qDebug() << "🔄 [重连调试] 连接后的套接字状态：" << TCP_sendMesSocket->state();
+}
+
+/**
+ * @brief 触发重连逻辑的内部函数
+ * @param source 触发源（用于调试日志）
+ * 
+ * 统一的重连逻辑处理，避免代码重复
+ */
+void CTCPImg::triggerReconnectLogic(const QString& source)
+{
+    qDebug() << QString("🔄 [%1] 触发重连逻辑检查").arg(source);
+    
+    // 检查重连条件
+    if (!m_autoReconnectEnabled) {
+        qDebug() << QString("🔄 [%1] 自动重连已禁用").arg(source);
+        return;
+    }
+    
+    if (m_serverAddress.isEmpty() || m_serverPort <= 0) {
+        qDebug() << QString("❌ [%1] 缺少有效的服务器连接参数，无法自动重连").arg(source);
+        return;
+    }
+    
+    if (m_reconnectAttempts >= m_maxReconnectAttempts) {
+        qDebug() << QString("❌ [%1] 已达到最大重连次数 (%2次)，停止自动重连").arg(source).arg(m_maxReconnectAttempts);
+        qDebug() << "🔍 开始执行服务端诊断检查...";
+        
+        // 执行服务端诊断
+        performServerDiagnostics();
+        return;
+    }
+    
+    // 增加重连计数
+    m_reconnectAttempts++;
+    qDebug() << QString("🔄 [%1] 准备自动重连 (第%2/%3次尝试)，%4秒后开始...")
+                .arg(source)
+                .arg(m_reconnectAttempts)
+                .arg(m_maxReconnectAttempts)
+                .arg(m_reconnectInterval / 1000.0);
+    
+    // 检查并停止现有定时器
+    if (m_reconnectTimer->isActive()) {
+        qDebug() << QString("🔄 [%1] 重连定时器已经在运行，先停止").arg(source);
+        m_reconnectTimer->stop();
+    }
+    
+    qDebug() << QString("🔄 [%1] 启动重连定时器，间隔：%2ms").arg(source).arg(m_reconnectInterval);
+    
+    // 启动重连定时器
+    m_reconnectTimer->start(m_reconnectInterval);
+    
+    qDebug() << QString("🔄 [%1] 重连定时器启动状态：%2").arg(source).arg(m_reconnectTimer->isActive() ? "成功" : "失败");
+    qDebug() << QString("🔄 [%1] 定时器剩余时间：%2ms").arg(source).arg(m_reconnectTimer->remainingTime());
+}
+
+/**
+ * @brief 执行服务端诊断检查
+ * 当重连失败后，检查服务端状态和网络连通性
+ */
+void CTCPImg::performServerDiagnostics()
+{
+    QStringList diagnosticOutput;
+    
+    // 诊断标题
+    diagnosticOutput << "🔍 ==================== 服务端诊断报告 ====================";
+    diagnosticOutput << QString("🔍 连接目标：%1:%2").arg(m_serverAddress).arg(m_serverPort);
+    diagnosticOutput << QString("🔍 重连尝试：%1/%2次").arg(m_reconnectAttempts).arg(m_maxReconnectAttempts);
+    diagnosticOutput << QString("🔍 诊断时间：%1").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
+    diagnosticOutput << "";
+    
+    // 1. 网络连通性检查
+    diagnosticOutput << "🔍 【步骤1】网络连通性检查";
+    QString connectivityResult = checkNetworkConnectivity(m_serverAddress, m_serverPort);
+    diagnosticOutput << QString("🔍 连通性结果：%1").arg(connectivityResult);
+    diagnosticOutput << "";
+    
+    // 2. 服务端状态分析
+    diagnosticOutput << "🔍 【步骤2】服务端状态分析";
+    diagnosticOutput << "🔍 ✅ 请检查以下项目：";
+    diagnosticOutput << QString("🔍    1. 服务端程序是否正在运行？");
+    diagnosticOutput << QString("🔍    2. 服务端是否监听在端口%1？").arg(m_serverPort);
+    diagnosticOutput << "🔍    3. 服务端是否有图像数据可发送？";
+    diagnosticOutput << "🔍    4. 服务端网络配置是否正确？";
+    diagnosticOutput << "";
+    
+    // 3. 采集端程序检查
+    diagnosticOutput << "🔍 【步骤3】采集端程序检查";
+    diagnosticOutput << "🔍 ✅ 请检查以下项目：";
+    diagnosticOutput << "🔍    1. 图像采集设备是否正常连接？";
+    diagnosticOutput << "🔍    2. 采集程序是否正常运行？";
+    diagnosticOutput << "🔍    3. 采集程序是否有图像数据输出？";
+    diagnosticOutput << "🔍    4. 采集程序网络发送是否正常？";
+    diagnosticOutput << "";
+    
+    // 4. 网络环境检查
+    diagnosticOutput << "🔍 【步骤4】网络环境检查";
+    diagnosticOutput << "🔍 ✅ 请检查以下项目：";
+    diagnosticOutput << "🔍    1. 客户端与服务端网络是否连通？";
+    diagnosticOutput << QString("🔍    2. 防火墙是否阻止了端口%1？").arg(m_serverPort);
+    diagnosticOutput << "🔍    3. 路由器/交换机配置是否正确？";
+    diagnosticOutput << "🔍    4. 网络带宽是否足够传输图像数据？";
+    diagnosticOutput << "";
+    
+    // 5. 生成完整诊断报告
+    QString diagnosticReport = generateDiagnosticReport();
+    diagnosticOutput << "🔍 【诊断总结】";
+    diagnosticOutput << diagnosticReport;
+    diagnosticOutput << "";
+    
+    // 6. 建议操作
+    diagnosticOutput << "🔍 【建议操作】";
+    diagnosticOutput << "🔍 💡 1. 手动重连：点击'立即重连'按钮重新尝试";
+    diagnosticOutput << "🔍 💡 2. 检查服务端：确认服务端程序正在运行并监听端口";
+    diagnosticOutput << "🔍 💡 3. 检查采集端：确认图像采集程序正常工作";
+    diagnosticOutput << "🔍 💡 4. 网络测试：使用ping/telnet等工具测试网络连通性";
+    diagnosticOutput << "🔍 💡 5. 重启服务：重启服务端和采集端程序";
+    diagnosticOutput << "🔍 💡 6. 联系技术支持：如问题持续存在，请联系技术支持";
+    diagnosticOutput << "";
+    diagnosticOutput << "🔍 ========================================================";
+    
+    // 将诊断信息发送到界面显示
+    QString fullDiagnosticText = diagnosticOutput.join("\n");
+    emit signalDiagnosticInfo(fullDiagnosticText);
+    
+    // 同时输出到控制台（用于开发调试）
+    for (const QString& line : diagnosticOutput) {
+        qDebug() << line;
+    }
+}
+
+/**
+ * @brief 检查网络连通性
+ * @param host 目标主机地址
+ * @param port 目标端口
+ * @return 连通性检查结果
+ */
+QString CTCPImg::checkNetworkConnectivity(const QString& host, int port)
+{
+    // 创建临时套接字进行连通性测试
+    QTcpSocket testSocket;
+    testSocket.setProxy(QNetworkProxy::NoProxy);
+    
+    // 设置较短的超时时间进行快速测试
+    testSocket.connectToHost(QHostAddress(host), port);
+    
+    if (testSocket.waitForConnected(3000)) {  // 3秒超时
+        testSocket.disconnectFromHost();
+        return "✅ 网络连通正常，可以建立TCP连接";
+    } else {
+        QAbstractSocket::SocketError error = testSocket.error();
+        QString errorString = testSocket.errorString();
+        
+        switch (error) {
+            case QAbstractSocket::ConnectionRefusedError:
+                return "❌ 连接被拒绝 - 服务端可能未启动或端口未监听";
+            case QAbstractSocket::HostNotFoundError:
+                return "❌ 主机未找到 - 请检查IP地址是否正确";
+            case QAbstractSocket::SocketTimeoutError:
+                return "❌ 连接超时 - 网络可能不通或服务端响应慢";
+            case QAbstractSocket::NetworkError:
+                return "❌ 网络错误 - 请检查网络连接";
+            default:
+                return QString("❌ 连接失败 - %1").arg(errorString);
+        }
+    }
+}
+
+/**
+ * @brief 生成诊断报告
+ * @return 详细的诊断报告字符串
+ */
+QString CTCPImg::generateDiagnosticReport()
+{
+    QStringList report;
+    
+    // 连接信息
+    report << QString("📊 连接信息：%1:%2").arg(m_serverAddress).arg(m_serverPort);
+    report << QString("📊 重连状态：已尝试%1次，均失败").arg(m_maxReconnectAttempts);
+    report << QString("📊 自动重连：已禁用（达到最大尝试次数）");
+    
+    // 可能的问题分析
+    report << "";
+    report << "🔍 可能的问题原因：";
+    report << "   • 服务端程序未运行或已崩溃";
+    report << "   • 图像采集设备故障或断开";
+    report << "   • 采集程序异常退出或挂起";
+    report << "   • 网络连接中断或配置错误";
+    report << "   • 防火墙阻止了网络连接";
+    report << "   • 服务端资源不足或过载";
+    
+    // 解决建议
+    report << "";
+    report << "💡 解决建议：";
+    report << "   1. 检查服务端：确认程序运行状态";
+    report << "   2. 检查采集端：确认设备和程序正常";
+    report << "   3. 测试网络：ping服务端IP地址";
+    report << "   4. 检查端口：telnet服务端端口";
+    report << "   5. 重启服务：重启相关程序和设备";
+    
+    return report.join("\n🔍 ");
 }
 
 /**
