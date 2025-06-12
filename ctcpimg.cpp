@@ -14,6 +14,14 @@ CTCPImg::CTCPImg(QObject *parent)
     // 初始化标志位，表示当前未开始刷新
     m_brefresh = false;
     
+    // 初始化重连相关参数
+    m_reconnectTimer = new QTimer(this);
+    m_serverPort = 0;
+    m_reconnectAttempts = 0;
+    m_maxReconnectAttempts = 5;
+    m_reconnectInterval = 3000;  // 3秒重连间隔
+    m_autoReconnectEnabled = true;  // 默认启用自动重连
+    
     // 使用默认的图像参数初始化
     m_imageWidth = WIDTH;
     m_imageHeight = HEIGHT;
@@ -47,7 +55,12 @@ CTCPImg::CTCPImg(QObject *parent)
             this, SLOT(slot_socketError(QAbstractSocket::SocketError)));
 #endif
     
+    // 连接重连定时器信号
+    connect(m_reconnectTimer, &QTimer::timeout, this, &CTCPImg::slot_reconnect);
+    m_reconnectTimer->setSingleShot(true);  // 设置为单次触发
+    
     qDebug() << "CTCPImg对象初始化完成，图像缓冲区大小：" << m_totalsize << "字节";
+    qDebug() << "自动重连功能已启用，最大重连次数：" << m_maxReconnectAttempts << "，重连间隔：" << m_reconnectInterval << "ms";
 }
 
 /**
@@ -57,6 +70,11 @@ CTCPImg::CTCPImg(QObject *parent)
  */
 CTCPImg::~CTCPImg(void)
 {
+    // 停止重连定时器
+    if (m_reconnectTimer) {
+        m_reconnectTimer->stop();
+    }
+    
     // 修复：正确释放QTcpSocket对象
     if(NULL != TCP_sendMesSocket)
     {
@@ -104,6 +122,17 @@ void CTCPImg::start(QString strAddr, int port)
         return;
     }
     
+    // 保存连接参数用于重连
+    m_serverAddress = strAddr;
+    m_serverPort = port;
+    m_reconnectAttempts = 0;  // 重置重连计数
+    
+    // 停止任何正在进行的重连尝试
+    if (m_reconnectTimer->isActive()) {
+        m_reconnectTimer->stop();
+        qDebug() << "停止之前的重连尝试";
+    }
+    
     // 如果已经连接，先断开
     if (TCP_sendMesSocket->state() == QAbstractSocket::ConnectedState) {
         qDebug() << "检测到现有连接，正在断开...";
@@ -114,6 +143,7 @@ void CTCPImg::start(QString strAddr, int port)
     TCP_sendMesSocket->setProxy(QNetworkProxy::NoProxy);
     
     qDebug() << "开始连接到服务器：" << strAddr << ":" << port;
+    qDebug() << "自动重连状态：" << (m_autoReconnectEnabled ? "启用" : "禁用");
     this->TCP_sendMesSocket->connectToHost(QHostAddress(strAddr), port);
 }
 
@@ -126,7 +156,15 @@ void CTCPImg::slot_connected()
 {
     m_brefresh = true;
     pictmp.clear();  // 清空接收缓冲区
-    qDebug() << "TCP连接建立成功，准备接收图像数据";
+    
+    // 连接成功，重置重连计数
+    m_reconnectAttempts = 0;
+    if (m_reconnectTimer->isActive()) {
+        m_reconnectTimer->stop();
+    }
+    
+    qDebug() << "✅ TCP连接建立成功，准备接收图像数据";
+    qDebug() << "🔄 重连计数已重置，当前连接状态：已连接";
 }
 
 /**
@@ -380,11 +418,34 @@ void CTCPImg::slot_disconnect()
     m_brefresh = false;
     pictmp.clear();  // 清空接收缓冲区
     
-    qDebug() << "TCP连接已断开，清理连接状态";
+    qDebug() << "❌ TCP连接已断开，清理连接状态";
     
     // 安全关闭连接
     if (TCP_sendMesSocket->state() != QAbstractSocket::UnconnectedState) {
         TCP_sendMesSocket->close();
+    }
+    
+    // 如果启用了自动重连且有有效的服务器地址
+    if (m_autoReconnectEnabled && !m_serverAddress.isEmpty() && m_serverPort > 0) {
+        if (m_reconnectAttempts < m_maxReconnectAttempts) {
+            m_reconnectAttempts++;
+            qDebug() << QString("🔄 准备自动重连 (第%1/%2次尝试)，%3秒后开始...")
+                        .arg(m_reconnectAttempts)
+                        .arg(m_maxReconnectAttempts)
+                        .arg(m_reconnectInterval / 1000.0);
+            
+            // 启动重连定时器
+            m_reconnectTimer->start(m_reconnectInterval);
+        } else {
+            qDebug() << QString("❌ 已达到最大重连次数 (%1次)，停止自动重连").arg(m_maxReconnectAttempts);
+            qDebug() << "💡 您可以手动点击连接按钮重新尝试连接";
+        }
+    } else {
+        if (!m_autoReconnectEnabled) {
+            qDebug() << "🔄 自动重连已禁用";
+        } else {
+            qDebug() << "❌ 缺少有效的服务器连接参数，无法自动重连";
+        }
     }
 }
 
@@ -630,6 +691,114 @@ int CTCPImg::findFrameHeader(const QByteArray& data, const QByteArray& header)
     
     qDebug() << "🔍 未找到帧头";
     return -1;  // 未找到
+}
+
+/**
+ * @brief 自动重连槽函数
+ * 在连接断开后尝试重新连接到服务器
+ */
+void CTCPImg::slot_reconnect()
+{
+    if (!m_autoReconnectEnabled) {
+        qDebug() << "🔄 自动重连已禁用，停止重连尝试";
+        return;
+    }
+    
+    if (m_serverAddress.isEmpty() || m_serverPort <= 0) {
+        qDebug() << "❌ 无效的服务器连接参数，无法重连";
+        return;
+    }
+    
+    // 检查当前连接状态
+    if (TCP_sendMesSocket->state() == QAbstractSocket::ConnectedState) {
+        qDebug() << "✅ 连接已建立，取消重连";
+        return;
+    }
+    
+    qDebug() << QString("🔄 开始第%1次重连尝试，连接到 %2:%3")
+                .arg(m_reconnectAttempts)
+                .arg(m_serverAddress)
+                .arg(m_serverPort);
+    
+    // 确保套接字处于未连接状态
+    if (TCP_sendMesSocket->state() != QAbstractSocket::UnconnectedState) {
+        TCP_sendMesSocket->abort();
+    }
+    
+    // 禁用代理
+    TCP_sendMesSocket->setProxy(QNetworkProxy::NoProxy);
+    
+    // 尝试重新连接
+    TCP_sendMesSocket->connectToHost(QHostAddress(m_serverAddress), m_serverPort);
+}
+
+/**
+ * @brief 停止自动重连
+ * 停止重连定时器，取消自动重连
+ */
+void CTCPImg::stopReconnect()
+{
+    if (m_reconnectTimer->isActive()) {
+        m_reconnectTimer->stop();
+        qDebug() << "🛑 已停止自动重连";
+    }
+    m_reconnectAttempts = 0;  // 重置重连计数
+}
+
+/**
+ * @brief 设置自动重连参数
+ * @param enabled 是否启用自动重连
+ * @param maxAttempts 最大重连尝试次数
+ * @param interval 重连间隔时间（毫秒）
+ */
+void CTCPImg::setAutoReconnect(bool enabled, int maxAttempts, int interval)
+{
+    m_autoReconnectEnabled = enabled;
+    m_maxReconnectAttempts = qMax(1, maxAttempts);  // 至少1次
+    m_reconnectInterval = qMax(1000, interval);     // 至少1秒间隔
+    
+    qDebug() << QString("🔄 自动重连设置更新：%1，最大尝试次数：%2，间隔：%3ms")
+                .arg(enabled ? "启用" : "禁用")
+                .arg(m_maxReconnectAttempts)
+                .arg(m_reconnectInterval);
+    
+    if (!enabled && m_reconnectTimer->isActive()) {
+        stopReconnect();
+    }
+}
+
+/**
+ * @brief 获取当前连接状态
+ * @return 连接状态
+ */
+QAbstractSocket::SocketState CTCPImg::getConnectionState() const
+{
+    return TCP_sendMesSocket ? TCP_sendMesSocket->state() : QAbstractSocket::UnconnectedState;
+}
+
+/**
+ * @brief 手动触发重连
+ * 立即尝试重新连接到服务器
+ */
+void CTCPImg::reconnectNow()
+{
+    if (m_serverAddress.isEmpty() || m_serverPort <= 0) {
+        qDebug() << "❌ 无效的服务器连接参数，无法重连";
+        return;
+    }
+    
+    // 停止当前的重连定时器
+    if (m_reconnectTimer->isActive()) {
+        m_reconnectTimer->stop();
+    }
+    
+    // 重置重连计数
+    m_reconnectAttempts = 0;
+    
+    qDebug() << "🔄 手动触发重连";
+    
+    // 立即尝试重连
+    slot_reconnect();
 }
 
 

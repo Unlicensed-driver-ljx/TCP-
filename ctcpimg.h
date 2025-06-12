@@ -7,6 +7,7 @@
 #include <QTcpSocket>
 #include <QHostAddress>
 #include <QNetworkProxy>
+#include <QTimer>
 #include "sysdefine.h"
 
 /**
@@ -76,6 +77,26 @@ public:
      * @return tap模式（1或2）
      */
     int getTapMode() const { return m_tapMode; }
+    
+    /**
+     * @brief 设置自动重连参数
+     * @param enabled 是否启用自动重连
+     * @param maxAttempts 最大重连尝试次数（默认5次）
+     * @param interval 重连间隔时间（毫秒，默认3000ms）
+     */
+    void setAutoReconnect(bool enabled, int maxAttempts = 5, int interval = 3000);
+    
+    /**
+     * @brief 获取当前连接状态
+     * @return 连接状态
+     */
+    QAbstractSocket::SocketState getConnectionState() const;
+    
+    /**
+     * @brief 手动触发重连
+     * 立即尝试重新连接到服务器
+     */
+    void reconnectNow();
 
 public slots:
     /**
@@ -110,6 +131,18 @@ public slots:
      * 处理各种网络连接错误，提供详细错误信息
      */
     void slot_socketError(QAbstractSocket::SocketError error);
+    
+    /**
+     * @brief 自动重连槽函数
+     * 在连接断开后尝试重新连接到服务器
+     */
+    void slot_reconnect();
+    
+    /**
+     * @brief 停止自动重连
+     * 停止重连定时器，取消自动重连
+     */
+    void stopReconnect();
 signals:
    /**
     * @brief 图像数据就绪信号
@@ -123,6 +156,15 @@ private:
    QByteArray pictmp;              ///< 临时数据缓冲区，用于累积接收的图像数据
    char* frameBuffer;              ///< 图像帧缓冲区，存储完整的图像数据
    int m_totalsize;                ///< 预期接收的图像数据总大小（字节）
+   
+   // 重连相关成员变量
+   QTimer* m_reconnectTimer;       ///< 重连定时器
+   QString m_serverAddress;        ///< 服务器地址
+   int m_serverPort;               ///< 服务器端口
+   int m_reconnectAttempts;        ///< 重连尝试次数
+   int m_maxReconnectAttempts;     ///< 最大重连尝试次数
+   int m_reconnectInterval;        ///< 重连间隔时间（毫秒）
+   bool m_autoReconnectEnabled;    ///< 是否启用自动重连
    
        // 动态图像参数
     int m_imageWidth;               ///< 图像宽度（像素）

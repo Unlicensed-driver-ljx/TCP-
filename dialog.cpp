@@ -9,7 +9,10 @@
  */
 Dialog::Dialog(QWidget *parent) :
     QDialog(parent),
-    ui(new Ui::Dialog)
+    ui(new Ui::Dialog),
+    m_reconnectBtn(nullptr),
+    m_autoReconnectCheckBox(nullptr),
+    m_connectionStatusLabel(nullptr)
 {
     // 设置用户界面
     ui->setupUi(this);
@@ -71,8 +74,13 @@ Dialog::Dialog(QWidget *parent) :
     // 连接TCP图像数据就绪信号到图像显示槽函数
     connect(&m_tcpImg, &CTCPImg::tcpImgReadySig, this, &Dialog::showLabelImg);
     
-    // 添加连接状态监控（通过定时器或其他方式）
-    // 这里可以添加更多的状态监控逻辑
+    // 初始化自动重连功能（默认启用）
+    // 注意：这个调用必须在initDebugInterface()之后，因为控件需要先创建
+    QTimer::singleShot(100, this, [this]() {
+        if (m_autoReconnectCheckBox && m_autoReconnectCheckBox->isChecked()) {
+            toggleAutoReconnect(true);
+        }
+    });
     
     // 为图像显示分配内存缓冲区
     m_showBuffer = new char[WIDTH * HEIGHT * CHANLE];
@@ -262,6 +270,9 @@ void Dialog::showLabelImg()
             // 可以在状态栏或其他地方显示这个信息
             qDebug() << "界面显示帧头信息：" << headerInfo;
         }
+        
+        // 图像显示成功，重新启用开始按钮
+        ui->pushButtonStart->setEnabled(true);
     }
     else {
         // 图像创建失败
@@ -307,6 +318,9 @@ void Dialog::initDebugInterface()
     
     // 添加分辨率设置面板
     originalLayout->addLayout(createResolutionPanel());
+    
+    // 添加重连控制面板
+    originalLayout->addLayout(createReconnectPanel());
     
     originalLayout->addWidget(ui->labelShowImg, 1);  // 图像显示区占主要空间
     
@@ -907,4 +921,147 @@ void Dialog::updateResolutionStatus()
                         .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 2);
     
     m_resolutionStatusLabel->setText(statusText);
+}
+
+/**
+ * @brief 创建重连控制面板
+ * @return 重连控制面板布局
+ */
+QLayout* Dialog::createReconnectPanel()
+{
+    QGroupBox* reconnectGroup = new QGroupBox("连接控制");
+    QHBoxLayout* reconnectLayout = new QHBoxLayout(reconnectGroup);
+    
+    // 连接状态标签
+    m_connectionStatusLabel = new QLabel("状态：未连接");
+    m_connectionStatusLabel->setStyleSheet("QLabel { font-weight: bold; color: #666; }");
+    
+    // 自动重连开关
+    m_autoReconnectCheckBox = new QCheckBox("自动重连");
+    m_autoReconnectCheckBox->setChecked(true);  // 默认启用
+    m_autoReconnectCheckBox->setToolTip("启用后，连接断开时会自动尝试重连");
+    
+    // 手动重连按钮
+    m_reconnectBtn = new QPushButton("立即重连");
+    m_reconnectBtn->setEnabled(false);  // 初始状态禁用
+    m_reconnectBtn->setToolTip("手动触发重连，会重置重连计数");
+    m_reconnectBtn->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }");
+    
+    // 连接信号
+    connect(m_autoReconnectCheckBox, &QCheckBox::toggled, this, &Dialog::toggleAutoReconnect);
+    connect(m_reconnectBtn, &QPushButton::clicked, this, &Dialog::manualReconnect);
+    
+    // 布局
+    reconnectLayout->addWidget(m_connectionStatusLabel);
+    reconnectLayout->addWidget(m_autoReconnectCheckBox);
+    reconnectLayout->addWidget(m_reconnectBtn);
+    reconnectLayout->addStretch();  // 添加弹性空间
+    
+    // 启动定时器定期更新连接状态
+    QTimer* statusTimer = new QTimer(this);
+    connect(statusTimer, &QTimer::timeout, this, &Dialog::updateConnectionStatus);
+    statusTimer->start(1000);  // 每秒更新一次状态
+    
+    // 创建一个垂直布局来包装GroupBox
+    QVBoxLayout* panelLayout = new QVBoxLayout();
+    panelLayout->addWidget(reconnectGroup);
+    
+    return panelLayout;
+}
+
+/**
+ * @brief 更新连接状态显示
+ */
+void Dialog::updateConnectionStatus()
+{
+    if (!m_connectionStatusLabel) return;
+    
+    QAbstractSocket::SocketState state = m_tcpImg.getConnectionState();
+    QString statusText;
+    QString styleSheet;
+    
+    switch (state) {
+        case QAbstractSocket::UnconnectedState:
+            statusText = "状态：未连接";
+            styleSheet = "QLabel { font-weight: bold; color: #666; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(true);
+            break;
+        case QAbstractSocket::HostLookupState:
+            statusText = "状态：查找主机...";
+            styleSheet = "QLabel { font-weight: bold; color: #FF9800; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        case QAbstractSocket::ConnectingState:
+            statusText = "状态：连接中...";
+            styleSheet = "QLabel { font-weight: bold; color: #FF9800; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        case QAbstractSocket::ConnectedState:
+            statusText = "状态：已连接 ✅";
+            styleSheet = "QLabel { font-weight: bold; color: #4CAF50; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        case QAbstractSocket::BoundState:
+            statusText = "状态：已绑定";
+            styleSheet = "QLabel { font-weight: bold; color: #2196F3; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        case QAbstractSocket::ClosingState:
+            statusText = "状态：断开中...";
+            styleSheet = "QLabel { font-weight: bold; color: #FF5722; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        case QAbstractSocket::ListeningState:
+            statusText = "状态：监听中";
+            styleSheet = "QLabel { font-weight: bold; color: #9C27B0; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(false);
+            break;
+        default:
+            statusText = "状态：未知";
+            styleSheet = "QLabel { font-weight: bold; color: #666; }";
+            if (m_reconnectBtn) m_reconnectBtn->setEnabled(true);
+            break;
+    }
+    
+    m_connectionStatusLabel->setText(statusText);
+    m_connectionStatusLabel->setStyleSheet(styleSheet);
+}
+
+/**
+ * @brief 手动重连槽函数
+ */
+void Dialog::manualReconnect()
+{
+    qDebug() << "用户手动触发重连";
+    
+    // 更新界面状态
+    ui->labelShowImg->setText("手动重连中...\n正在尝试重新连接到服务器");
+    ui->pushButtonStart->setEnabled(false);
+    
+    // 触发重连
+    m_tcpImg.reconnectNow();
+    
+    // 更新连接状态显示
+    updateConnectionStatus();
+}
+
+/**
+ * @brief 切换自动重连状态
+ * @param enabled 是否启用自动重连
+ */
+void Dialog::toggleAutoReconnect(bool enabled)
+{
+    qDebug() << "自动重连设置变更：" << (enabled ? "启用" : "禁用");
+    
+    // 设置TCP图像对象的自动重连参数
+    m_tcpImg.setAutoReconnect(enabled, 5, 3000);  // 最大5次，间隔3秒
+    
+    // 更新界面提示
+    QString tooltip = enabled ? 
+        "自动重连已启用\n连接断开时会自动尝试重连（最多5次，间隔3秒）" : 
+        "自动重连已禁用\n连接断开时需要手动重连";
+    
+    if (m_autoReconnectCheckBox) {
+        m_autoReconnectCheckBox->setToolTip(tooltip);
+    }
 }

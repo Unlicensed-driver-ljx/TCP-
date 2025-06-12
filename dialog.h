@@ -15,6 +15,7 @@
 #include <QLineEdit>
 #include <QRadioButton>
 #include <QCheckBox>
+#include <QTimer>
 #include "sysdefine.h"
 #include "tcpdebugger.h"
 #include "dataformatter.h"
@@ -124,6 +125,16 @@ private slots:
      * @brief 重置分辨率为默认值
      */
     void resetResolutionToDefault();
+    
+    /**
+     * @brief 手动重连槽函数
+     */
+    void manualReconnect();
+    
+    /**
+     * @brief 切换自动重连状态
+     */
+    void toggleAutoReconnect(bool enabled);
 
 private:
     Ui::Dialog *ui;          ///< UI界面指针，由Qt设计器生成的界面对象
@@ -162,6 +173,11 @@ private:
     QPushButton* m_applyResolutionBtn;  ///< 应用分辨率按钮
     QPushButton* m_resetResolutionBtn;  ///< 重置分辨率按钮
     QLabel* m_resolutionStatusLabel;    ///< 分辨率状态标签
+    
+    // 重连控制相关控件
+    QPushButton* m_reconnectBtn;        ///< 手动重连按钮
+    QCheckBox* m_autoReconnectCheckBox; ///< 自动重连开关
+    QLabel* m_connectionStatusLabel;    ///< 连接状态标签
 
     /**
      * @brief 初始化调试界面
@@ -195,6 +211,17 @@ private:
      * @brief 更新分辨率状态显示
      */
     void updateResolutionStatus();
+    
+    /**
+     * @brief 创建重连控制面板
+     * @return 重连控制面板布局
+     */
+    QLayout* createReconnectPanel();
+    
+    /**
+     * @brief 更新连接状态显示
+     */
+    void updateConnectionStatus();
 };
 
 #endif // DIALOG_H
