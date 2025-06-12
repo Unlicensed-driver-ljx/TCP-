@@ -18,14 +18,18 @@
 #include <QTimer>
 #include <QProgressBar>
 #include <QVariantList>
+#include <QSlider>
+#include <QScrollArea>
+#include <QPixmap>
+#include <QResizeEvent>
 #include "sysdefine.h"
 #include "tcpdebugger.h"
 #include "dataformatter.h"
-#include "ui_dialog.h"
+// #include "ui_dialog.h"  // 已使用现代化界面替代
 
-namespace Ui {
-class Dialog;
-}
+// namespace Ui {
+// class Dialog;
+// }  // 已使用现代化界面替代
 
 /**
  * @class Dialog
@@ -156,8 +160,79 @@ private slots:
      */
     void toggleAutoReconnect(bool enabled);
 
+    /**
+     * @brief 更新分辨率状态显示
+     */
+    void updateResolutionStatus();
+    
+    /**
+     * @brief 创建图像缩放控制面板
+     * @return 缩放控制面板布局
+     */
+    QLayout* createZoomControlPanel();
+    
+    /**
+     * @brief 更新图像显示
+     * @param pixmap 要显示的图像
+     */
+    void updateImageDisplay(const QPixmap& pixmap);
+    
+    /**
+     * @brief 缩放图像到指定因子
+     * @param factor 缩放因子
+     */
+    void scaleImage(double factor);
+    
+    /**
+     * @brief 适应窗口大小显示图像
+     */
+    void fitImageToWindow();
+    
+    /**
+     * @brief 显示图像实际大小
+     */
+    void showActualSize();
+    
+    /**
+     * @brief 放大图像
+     */
+    void zoomIn();
+    
+    /**
+     * @brief 缩小图像
+     */
+    void zoomOut();
+    
+    /**
+     * @brief 设置缩放因子
+     * @param factor 缩放因子
+     */
+    void setZoomFactor(double factor);
+    
+    /**
+     * @brief 更新缩放控件状态
+     */
+    void updateZoomControls();
+
+    /**
+     * @brief 更新连接状态显示
+     */
+    void updateConnectionStatus();
+    
+    /**
+     * @brief 更新重连进度显示
+     */
+    void updateReconnectProgress();
+
+protected:
+    /**
+     * @brief 窗口大小调整事件
+     * @param event 调整大小事件
+     */
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
-    Ui::Dialog *ui;          ///< UI界面指针，由Qt设计器生成的界面对象
+    // Ui::Dialog *ui;          ///< UI界面指针，已使用现代化界面替代
     CTCPImg m_tcpImg;        ///< TCP图像传输对象，处理网络通信和数据接收
     char* m_showBuffer;      ///< 图像显示缓冲区，用于临时存储要显示的图像数据
     QImage m_qimage;         ///< Qt图像对象，用于图像格式转换和显示处理
@@ -195,6 +270,16 @@ private:
     QPushButton* m_resetResolutionBtn;  ///< 重置分辨率按钮
     QLabel* m_resolutionStatusLabel;    ///< 分辨率状态标签
     
+    // 图像缩放相关控件
+    QSlider* m_zoomSlider;              ///< 缩放滑块
+    QLabel* m_zoomLabel;                ///< 缩放比例标签
+    QPushButton* m_fitWindowBtn;        ///< 适应窗口按钮
+    QPushButton* m_actualSizeBtn;       ///< 实际大小按钮
+    QPushButton* m_zoomInBtn;           ///< 放大按钮
+    QPushButton* m_zoomOutBtn;          ///< 缩小按钮
+    QScrollArea* m_imageScrollArea;     ///< 图像滚动区域
+    QLabel* m_imageDisplayLabel;        ///< 图像显示标签（替代原来的labelShowImg）
+    
     // 重连控制相关控件
     QPushButton* m_reconnectBtn;        ///< 手动重连按钮
     QCheckBox* m_autoReconnectCheckBox; ///< 自动重连开关
@@ -203,6 +288,16 @@ private:
     QProgressBar* m_reconnectProgressBar; ///< 重连进度条
     QTimer* m_reconnectDisplayTimer;    ///< 重连显示更新定时器
     QPushButton* m_diagnosticBtn;       ///< 诊断按钮
+    
+    // 现代化服务器连接控件
+    QLineEdit* m_serverIPEdit;          ///< 服务器IP输入框
+    QLineEdit* m_serverPortEdit;        ///< 服务器端口输入框
+    QPushButton* m_connectBtn;          ///< 连接按钮
+
+    // 缩放相关变量
+    double m_currentZoomFactor;         ///< 当前缩放因子
+    QPixmap m_originalPixmap;           ///< 原始图像像素图
+    bool m_fitToWindow;                 ///< 是否适应窗口模式
 
     /**
      * @brief 初始化调试界面
@@ -233,25 +328,16 @@ private:
     QLayout* createResolutionPanel();
 
     /**
-     * @brief 更新分辨率状态显示
-     */
-    void updateResolutionStatus();
-    
-    /**
      * @brief 创建重连控制面板
      * @return 重连控制面板布局
      */
     QLayout* createReconnectPanel();
     
     /**
-     * @brief 更新连接状态显示
+     * @brief 创建服务器连接面板
+     * @return 服务器连接面板布局
      */
-    void updateConnectionStatus();
-
-    /**
-     * @brief 更新重连进度显示
-     */
-    void updateReconnectProgress();
+    QLayout* createServerConnectionPanel();
 
     /**
      * @brief 设置统一的现代化样式表

@@ -9,16 +9,24 @@
  */
 Dialog::Dialog(QWidget *parent) :
     QDialog(parent),
-    ui(new Ui::Dialog),
+    // ui(new Ui::Dialog),  // 已移除UI依赖
+    m_showBuffer(nullptr),
     m_reconnectBtn(nullptr),
     m_autoReconnectCheckBox(nullptr),
-    m_connectionStatusLabel(nullptr)
+    m_connectionStatusLabel(nullptr),
+    m_serverIPEdit(nullptr),
+    m_serverPortEdit(nullptr),
+    m_connectBtn(nullptr),
+    m_currentZoomFactor(1.0),
+    m_fitToWindow(true)
 {
     // 设置用户界面
-    ui->setupUi(this);
+    // ui->setupUi(this);  // 不再需要，使用完全现代化界面
     
-    // 设置窗口标题
-    this->setWindowTitle("TCP图像传输接收程序 - 集成网络调试工具");
+    // 设置窗口属性（替代UI文件）
+    this->setWindowTitle("TCP图像传输程序 v2.2.3");
+    this->resize(1603, 700);
+    this->setMinimumSize(800, 600);  // 设置最小窗口尺寸
     
     // 设置统一的现代化样式表
     setUnifiedStyleSheet();
@@ -35,44 +43,8 @@ Dialog::Dialog(QWidget *parent) :
     // 初始化调试界面
     initDebugInterface();
     
-    // 连接开始按钮的点击事件
-    connect(ui->pushButtonStart, &QPushButton::clicked, [=]()
-    {
-        // 获取用户输入的IP地址和端口号
-        QString ipAddress = ui->lineEditAddr->text().trimmed();
-        QString portText = ui->lineEditPort->text().trimmed();
-        
-        // 输入验证
-        if (ipAddress.isEmpty()) {
-            qDebug() << "错误：请输入服务器IP地址";
-            ui->labelShowImg->setText("错误：请输入服务器IP地址");
-            return;
-        }
-        
-        if (portText.isEmpty()) {
-            qDebug() << "错误：请输入服务器端口号";
-            ui->labelShowImg->setText("错误：请输入服务器端口号");
-            return;
-        }
-        
-        // 端口号转换和验证
-        bool ok;
-        int port = portText.toInt(&ok);
-        if (!ok || port <= 0 || port > 65535) {
-            qDebug() << "错误：端口号格式不正确，请输入1-65535范围内的数字";
-            ui->labelShowImg->setText("错误：端口号格式不正确\n请输入1-65535范围内的数字");
-            return;
-        }
-        
-        // 显示连接状态信息
-        ui->labelShowImg->setText(QString("正在连接到 %1:%2...\n请等待连接建立").arg(ipAddress).arg(port));
-        ui->pushButtonStart->setEnabled(false);  // 防止重复点击
-        
-        qDebug() << "用户发起连接请求：" << ipAddress << ":" << port;
-        
-        // 启动TCP连接
-        m_tcpImg.start(ipAddress, port);
-    });
+    // 现代化服务器连接面板初始化
+    // 注意：这些控件将在createServerConnectionPanel()中创建
 
     // 连接TCP图像数据就绪信号到图像显示槽函数
     connect(&m_tcpImg, &CTCPImg::tcpImgReadySig, this, &Dialog::showLabelImg);
@@ -92,16 +64,16 @@ Dialog::Dialog(QWidget *parent) :
     m_showBuffer = new char[WIDTH * HEIGHT * CHANLE];
     if (m_showBuffer == nullptr) {
         qDebug() << "严重错误：图像缓冲区内存分配失败";
-        ui->labelShowImg->setText("严重错误：内存分配失败\n程序可能无法正常工作");
+        m_imageDisplayLabel->setText("严重错误：内存分配失败\n程序可能无法正常工作");
         return;
     }
     
     // 初始化显示缓冲区为0
     memset((void*)m_showBuffer, 0, WIDTH * HEIGHT * CHANLE);
     
-    // 设置标签的初始显示文本
-    ui->labelShowImg->setText("TCP图像传输接收程序已启动\n\n请输入服务器地址和端口号，然后点击开始连接\n\n默认配置：\nIP：192.168.1.31\n端口：17777");
-    ui->labelShowImg->setAlignment(Qt::AlignCenter);  // 居中显示文本
+    // 设置标签的初始显示文本（已使用现代化界面）
+    // ui->labelShowImg->setText("TCP图像传输接收程序已启动\n\n请输入服务器地址和端口号，然后点击开始连接\n\n默认配置：\nIP：192.168.1.31\n端口：17777");
+    // ui->labelShowImg->setAlignment(Qt::AlignCenter);  // 居中显示文本
     
     qDebug() << "Dialog界面初始化完成，图像缓冲区大小：" << (WIDTH * HEIGHT * CHANLE) << "字节";
 }
@@ -113,8 +85,8 @@ Dialog::Dialog(QWidget *parent) :
  */
 Dialog::~Dialog()
 {
-    // 释放UI资源
-    delete ui;
+    // 释放UI资源（已使用现代化界面）
+    // delete ui;
     
     // 释放图像显示缓冲区
     if (m_showBuffer != nullptr) {
@@ -140,8 +112,8 @@ void Dialog::showLabelImg()
     char *frameBuffer = m_tcpImg.getFrameBuffer();
     if (frameBuffer == nullptr) {
         qDebug() << "错误：获取图像缓冲区失败";
-        ui->labelShowImg->setText("错误：无法获取图像数据");
-        ui->pushButtonStart->setEnabled(true);  // 重新启用开始按钮
+        m_imageDisplayLabel->setText("错误：无法获取图像数据");
+        // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
         return;
     }
     
@@ -156,8 +128,8 @@ void Dialog::showLabelImg()
         memcpy(m_showBuffer, frameBuffer, totalSize);
     } catch (const std::exception& e) {
         qDebug() << "错误：图像数据复制失败：" << e.what();
-        ui->labelShowImg->setText("错误：图像数据处理失败");
-        ui->pushButtonStart->setEnabled(true);
+        m_imageDisplayLabel->setText("错误：图像数据处理失败");
+        // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
         return;
     }
     
@@ -222,29 +194,22 @@ void Dialog::showLabelImg()
         } catch (const std::exception& e) {
             qDebug() << "多通道图像处理失败：" << e.what();
             delete[] grayBuffer;
-            ui->labelShowImg->setText("错误：多通道图像处理失败");
-            ui->pushButtonStart->setEnabled(true);
+            m_imageDisplayLabel->setText("错误：多通道图像处理失败");
+            // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
             return;
         }
     }
     
     // 检查QImage对象是否创建成功
     if (!m_qimage.isNull()) {
-        // 图像创建成功，更新显示
-        QPixmap pixmap = QPixmap::fromImage(m_qimage);
+        // 图像创建成功，保存原始图像并更新显示
+        m_originalPixmap = QPixmap::fromImage(m_qimage);
         
-        // 如果图像尺寸大于标签尺寸，进行缩放以适应显示
-        QSize labelSize = ui->labelShowImg->size();
-        if (pixmap.size().width() > labelSize.width() || pixmap.size().height() > labelSize.height()) {
-            pixmap = pixmap.scaled(labelSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            qDebug() << "图像已缩放以适应显示区域：" << labelSize;
-        }
-        
-        // 设置图像到标签
-        ui->labelShowImg->setPixmap(pixmap);
+        // 更新图像显示
+        updateImageDisplay(m_originalPixmap);
         
         // 重新启用开始按钮，允许用户重新连接
-        ui->pushButtonStart->setEnabled(true);
+        // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
         
         qDebug() << "图像显示更新成功，图像尺寸：" << m_qimage.width() << "x" << m_qimage.height();
         
@@ -278,7 +243,7 @@ void Dialog::showLabelImg()
         }
         
         // 图像显示成功，重新启用开始按钮
-        ui->pushButtonStart->setEnabled(true);
+        // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
     }
     else {
         // 图像创建失败
@@ -286,10 +251,10 @@ void Dialog::showLabelImg()
         qDebug() << "图像参数：宽度=" << width << "，高度=" << height << "，通道数=" << channels;
         
         // 显示错误信息给用户
-        ui->labelShowImg->setText("错误：图像数据格式不正确\n\n可能原因：\n1. 图像数据损坏\n2. 数据格式不匹配\n3. 网络传输错误\n\n请检查服务器端图像格式设置");
+        m_imageDisplayLabel->setText("错误：图像数据格式不正确\n\n可能原因：\n1. 图像数据损坏\n2. 数据格式不匹配\n3. 网络传输错误\n\n请检查服务器端图像格式设置");
         
         // 重新启用开始按钮
-        ui->pushButtonStart->setEnabled(true);
+        // ui->pushButtonStart->setEnabled(true);  // 已移除原始UI控件
     }
 }
 
@@ -308,19 +273,12 @@ void Dialog::initDebugInterface()
     QVBoxLayout* imageLayout = new QVBoxLayout(m_imageTab);
     
     // 将原有的UI控件添加到图像标签页
-    // 保留原有UI的完整布局
+    // 使用现代化界面布局
     QWidget* imageWidget = new QWidget();
     QVBoxLayout* originalLayout = new QVBoxLayout(imageWidget);
     
-    // 添加输入控件组
-    QHBoxLayout* inputLayout = new QHBoxLayout();
-    inputLayout->addWidget(new QLabel("服务器IP:"));
-    inputLayout->addWidget(ui->lineEditAddr);
-    inputLayout->addWidget(new QLabel("端口:"));
-    inputLayout->addWidget(ui->lineEditPort);
-    inputLayout->addWidget(ui->pushButtonStart);
-    
-    originalLayout->addLayout(inputLayout);
+    // 添加现代化服务器连接面板
+    originalLayout->addLayout(createServerConnectionPanel());
     
     // 添加分辨率设置面板
     originalLayout->addLayout(createResolutionPanel());
@@ -328,7 +286,21 @@ void Dialog::initDebugInterface()
     // 添加重连控制面板
     originalLayout->addLayout(createReconnectPanel());
     
-    originalLayout->addWidget(ui->labelShowImg, 1);  // 图像显示区占主要空间
+    // 添加图像缩放控制面板
+    originalLayout->addLayout(createZoomControlPanel());
+    
+    // 创建图像滚动区域替代原来的labelShowImg
+    m_imageScrollArea = new QScrollArea();
+    m_imageDisplayLabel = new QLabel();
+    m_imageDisplayLabel->setAlignment(Qt::AlignCenter);
+    m_imageDisplayLabel->setStyleSheet("QLabel { background-color: #f0f0f0; border: 1px solid #ccc; }");
+    m_imageDisplayLabel->setText("TCP图像传输接收程序已启动\n\n请输入服务器地址和端口号，然后点击开始连接\n\n默认配置：\nIP：192.168.1.31\n端口：17777");
+    
+    m_imageScrollArea->setWidget(m_imageDisplayLabel);
+    m_imageScrollArea->setWidgetResizable(false);  // 不自动调整大小，支持滚动
+    m_imageScrollArea->setAlignment(Qt::AlignCenter);
+    
+    originalLayout->addWidget(m_imageScrollArea, 1);  // 图像显示区占主要空间
     
     imageLayout->addWidget(imageWidget);
     m_tabWidget->addTab(m_imageTab, "图像传输");
@@ -884,19 +856,19 @@ void Dialog::applyResolutionSettings()
     
     // 验证输入
     if (!widthOk || width <= 0) {
-        ui->labelShowImg->setText("错误：图像宽度格式不正确");
+        m_imageDisplayLabel->setText("错误：图像宽度格式不正确");
         return;
     }
     
     if (!heightOk || height <= 0) {
-        ui->labelShowImg->setText("错误：图像高度格式不正确");
+        m_imageDisplayLabel->setText("错误：图像高度格式不正确");
         return;
     }
     
     // 计算内存大小并提醒用户
     long long totalBytes = (long long)width * height * channels;
     if (totalBytes > 50 * 1024 * 1024) {
-        ui->labelShowImg->setText(QString("错误：图像数据过大\n需要 %1 MB 内存，超过50MB限制")
+        m_imageDisplayLabel->setText(QString("错误：图像数据过大\n需要 %1 MB 内存，超过50MB限制")
                                   .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 1));
         return;
     }
@@ -920,7 +892,7 @@ void Dialog::applyResolutionSettings()
              else if (channels == 4) channelInfo = "RGBA彩色图像";
              else channelInfo = QString("%1通道图像(提取第一通道显示)").arg(channels);
              
-             ui->labelShowImg->setText(QString("✅ 分辨率设置成功\n\n新设置：%1 x %2 x %3\n格式：8bit %4\n内存占用：%5 MB\n\n准备接收新的图像数据...")
+             m_imageDisplayLabel->setText(QString("✅ 分辨率设置成功\n\n新设置：%1 x %2 x %3\n格式：8bit %4\n内存占用：%5 MB\n\n准备接收新的图像数据...")
                                        .arg(width).arg(height).arg(channels)
                                        .arg(channelInfo)
                                        .arg(totalBytes / 1024.0 / 1024.0, 0, 'f', 2));
@@ -928,11 +900,11 @@ void Dialog::applyResolutionSettings()
             qDebug() << "分辨率设置成功：" << width << "x" << height << "x" << channels;
             
         } catch (const std::bad_alloc&) {
-            ui->labelShowImg->setText("错误：显示缓冲区内存分配失败");
+            m_imageDisplayLabel->setText("错误：显示缓冲区内存分配失败");
             m_showBuffer = nullptr;
         }
     } else {
-        ui->labelShowImg->setText("错误：分辨率设置失败\n请检查输入参数");
+        m_imageDisplayLabel->setText("错误：分辨率设置失败\n请检查输入参数");
     }
 }
 
@@ -955,7 +927,7 @@ void Dialog::resetResolutionToDefault()
     // 自动应用默认设置
     applyResolutionSettings();
     
-    ui->labelShowImg->setText("✅ 已重置为默认分辨率\n\n准备接收图像数据...");
+    m_imageDisplayLabel->setText("✅ 已重置为默认分辨率\n\n准备接收图像数据...");
     qDebug() << "分辨率已重置为默认值";
 }
 
@@ -1007,7 +979,7 @@ void Dialog::applyResolutionPreset(int index)
     applyResolutionSettings();
     
     QString presetName = m_resolutionPresetCombo->currentText();
-    ui->labelShowImg->setText(QString("✅ 已应用分辨率预设：%1\n\n准备接收图像数据...").arg(presetName));
+    m_imageDisplayLabel->setText(QString("✅ 已应用分辨率预设：%1\n\n准备接收图像数据...").arg(presetName));
     qDebug() << QString("分辨率预设已应用：%1 (%2x%3)").arg(presetName).arg(width).arg(height);
 }
 
@@ -1274,7 +1246,7 @@ void Dialog::performDiagnostics()
     }
     
     // 在主图像显示区域显示诊断提示
-    ui->labelShowImg->setText("🔍 正在执行服务端诊断检查...\n\n请稍候，正在检测网络连通性和服务端状态...");
+    m_imageDisplayLabel->setText("🔍 正在执行服务端诊断检查...\n\n请稍候，正在检测网络连通性和服务端状态...");
     
     // 异步执行诊断，避免阻塞UI
     QTimer::singleShot(100, this, [this]() {
@@ -1607,21 +1579,21 @@ void Dialog::setUnifiedStyleSheet()
 void Dialog::showDiagnosticInfo(const QString& diagnosticInfo)
 {
     // 在图像显示区域显示诊断信息
-    ui->labelShowImg->setText(diagnosticInfo);
+    m_imageDisplayLabel->setText(diagnosticInfo);
     
     // 设置文本对齐方式为左上角对齐，便于阅读长文本
-    ui->labelShowImg->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_imageDisplayLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     
     // 设置文本自动换行
-    ui->labelShowImg->setWordWrap(true);
+    m_imageDisplayLabel->setWordWrap(true);
     
     // 设置字体为等宽字体，保持格式对齐
     QFont font("Consolas, Monaco, monospace");
     font.setPointSize(9);
-    ui->labelShowImg->setFont(font);
+    m_imageDisplayLabel->setFont(font);
     
     // 设置背景色为浅灰色，便于阅读
-    ui->labelShowImg->setStyleSheet(
+    m_imageDisplayLabel->setStyleSheet(
         "QLabel {"
         "    background-color: #f5f5f5;"
         "    border: 1px solid #ddd;"
@@ -1631,4 +1603,334 @@ void Dialog::showDiagnosticInfo(const QString& diagnosticInfo)
     );
     
     qDebug() << "诊断信息已显示在界面上";
+}
+
+/**
+ * @brief 创建图像缩放控制面板
+ * @return 缩放控制面板布局
+ */
+QLayout* Dialog::createZoomControlPanel()
+{
+    QGroupBox* zoomGroup = new QGroupBox("🔍 图像缩放控制");
+    QHBoxLayout* zoomLayout = new QHBoxLayout(zoomGroup);
+    
+    // 缩放按钮组
+    m_zoomOutBtn = new QPushButton("🔍-");
+    m_zoomOutBtn->setFixedSize(35, 25);
+    m_zoomOutBtn->setToolTip("缩小图像 (Ctrl+-)");
+    zoomLayout->addWidget(m_zoomOutBtn);
+    
+    // 缩放滑块
+    m_zoomSlider = new QSlider(Qt::Horizontal);
+    m_zoomSlider->setRange(10, 500);  // 10% 到 500%
+    m_zoomSlider->setValue(100);      // 默认100%
+    m_zoomSlider->setFixedWidth(150);
+    m_zoomSlider->setToolTip("拖动调整缩放比例 (10%-500%)");
+    zoomLayout->addWidget(m_zoomSlider);
+    
+    m_zoomInBtn = new QPushButton("🔍+");
+    m_zoomInBtn->setFixedSize(35, 25);
+    m_zoomInBtn->setToolTip("放大图像 (Ctrl++)");
+    zoomLayout->addWidget(m_zoomInBtn);
+    
+    // 缩放比例标签
+    m_zoomLabel = new QLabel("100%");
+    m_zoomLabel->setFixedWidth(50);
+    m_zoomLabel->setAlignment(Qt::AlignCenter);
+    m_zoomLabel->setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }");
+    zoomLayout->addWidget(m_zoomLabel);
+    
+    // 预设缩放按钮
+    m_fitWindowBtn = new QPushButton("📐 适应窗口");
+    m_fitWindowBtn->setCheckable(true);
+    m_fitWindowBtn->setChecked(true);  // 默认适应窗口
+    m_fitWindowBtn->setToolTip("自动调整图像大小以适应窗口");
+    zoomLayout->addWidget(m_fitWindowBtn);
+    
+    m_actualSizeBtn = new QPushButton("📏 实际大小");
+    m_actualSizeBtn->setToolTip("显示图像的实际像素大小 (100%)");
+    zoomLayout->addWidget(m_actualSizeBtn);
+    
+    // 添加弹性空间
+    zoomLayout->addStretch();
+    
+    // 连接信号槽
+    connect(m_zoomSlider, &QSlider::valueChanged, this, [this](int value) {
+        setZoomFactor(value / 100.0);
+    });
+    
+    connect(m_zoomInBtn, &QPushButton::clicked, this, &Dialog::zoomIn);
+    connect(m_zoomOutBtn, &QPushButton::clicked, this, &Dialog::zoomOut);
+    connect(m_fitWindowBtn, &QPushButton::toggled, this, [this](bool checked) {
+        m_fitToWindow = checked;
+        if (checked) {
+            fitImageToWindow();
+        }
+    });
+    connect(m_actualSizeBtn, &QPushButton::clicked, this, &Dialog::showActualSize);
+    
+    QVBoxLayout* panelLayout = new QVBoxLayout();
+    panelLayout->addWidget(zoomGroup);
+    
+    return panelLayout;
+}
+
+/**
+ * @brief 更新图像显示
+ * @param pixmap 要显示的图像
+ */
+void Dialog::updateImageDisplay(const QPixmap& pixmap)
+{
+    if (pixmap.isNull()) {
+        return;
+    }
+    
+    QPixmap scaledPixmap;
+    
+    if (m_fitToWindow) {
+        // 适应窗口模式：根据滚动区域大小自动缩放
+        fitImageToWindow();
+    } else {
+        // 固定缩放模式：按当前缩放因子显示
+        scaleImage(m_currentZoomFactor);
+    }
+}
+
+/**
+ * @brief 缩放图像到指定因子
+ * @param factor 缩放因子
+ */
+void Dialog::scaleImage(double factor)
+{
+    if (m_originalPixmap.isNull()) {
+        return;
+    }
+    
+    m_currentZoomFactor = factor;
+    
+    // 计算缩放后的尺寸
+    QSize scaledSize = m_originalPixmap.size() * factor;
+    
+    // 缩放图像
+    QPixmap scaledPixmap = m_originalPixmap.scaled(scaledSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    
+    // 更新显示标签
+    m_imageDisplayLabel->setPixmap(scaledPixmap);
+    m_imageDisplayLabel->resize(scaledSize);
+    
+    // 更新缩放控件状态
+    updateZoomControls();
+    
+    qDebug() << QString("图像已缩放到 %1%，尺寸：%2x%3")
+                .arg(factor * 100, 0, 'f', 1)
+                .arg(scaledSize.width())
+                .arg(scaledSize.height());
+}
+
+/**
+ * @brief 适应窗口大小显示图像
+ */
+void Dialog::fitImageToWindow()
+{
+    if (m_originalPixmap.isNull() || !m_imageScrollArea) {
+        return;
+    }
+    
+    // 获取滚动区域的可用空间（减去滚动条和边距）
+    QSize availableSize = m_imageScrollArea->viewport()->size();
+    QSize imageSize = m_originalPixmap.size();
+    
+    // 计算适应窗口的缩放因子
+    double scaleX = static_cast<double>(availableSize.width()) / imageSize.width();
+    double scaleY = static_cast<double>(availableSize.height()) / imageSize.height();
+    double scaleFactor = qMin(scaleX, scaleY);
+    
+    // 限制最小和最大缩放因子
+    scaleFactor = qMax(0.1, qMin(5.0, scaleFactor));
+    
+    // 应用缩放
+    m_currentZoomFactor = scaleFactor;
+    scaleImage(scaleFactor);
+    
+    qDebug() << QString("图像已适应窗口，缩放因子：%1").arg(scaleFactor);
+}
+
+/**
+ * @brief 显示图像实际大小
+ */
+void Dialog::showActualSize()
+{
+    m_fitToWindow = false;
+    m_fitWindowBtn->setChecked(false);
+    setZoomFactor(1.0);
+}
+
+/**
+ * @brief 放大图像
+ */
+void Dialog::zoomIn()
+{
+    m_fitToWindow = false;
+    m_fitWindowBtn->setChecked(false);
+    
+    double newFactor = m_currentZoomFactor * 1.25;  // 每次放大25%
+    newFactor = qMin(5.0, newFactor);  // 最大500%
+    
+    setZoomFactor(newFactor);
+}
+
+/**
+ * @brief 缩小图像
+ */
+void Dialog::zoomOut()
+{
+    m_fitToWindow = false;
+    m_fitWindowBtn->setChecked(false);
+    
+    double newFactor = m_currentZoomFactor / 1.25;  // 每次缩小25%
+    newFactor = qMax(0.1, newFactor);  // 最小10%
+    
+    setZoomFactor(newFactor);
+}
+
+/**
+ * @brief 设置缩放因子
+ * @param factor 缩放因子
+ */
+void Dialog::setZoomFactor(double factor)
+{
+    factor = qMax(0.1, qMin(5.0, factor));  // 限制在10%-500%之间
+    
+    if (qAbs(factor - m_currentZoomFactor) < 0.01) {
+        return;  // 变化太小，不需要更新
+    }
+    
+    scaleImage(factor);
+}
+
+/**
+ * @brief 更新缩放控件状态
+ */
+void Dialog::updateZoomControls()
+{
+    if (!m_zoomSlider || !m_zoomLabel) {
+        return;
+    }
+    
+    // 更新滑块位置（避免触发信号）
+    m_zoomSlider->blockSignals(true);
+    m_zoomSlider->setValue(static_cast<int>(m_currentZoomFactor * 100));
+    m_zoomSlider->blockSignals(false);
+    
+    // 更新缩放比例标签
+    m_zoomLabel->setText(QString("%1%").arg(static_cast<int>(m_currentZoomFactor * 100)));
+    
+    // 更新按钮状态
+    if (m_zoomInBtn) {
+        m_zoomInBtn->setEnabled(m_currentZoomFactor < 5.0);
+    }
+    if (m_zoomOutBtn) {
+        m_zoomOutBtn->setEnabled(m_currentZoomFactor > 0.1);
+    }
+}
+
+/**
+ * @brief 窗口大小调整事件
+ * @param event 调整大小事件
+ */
+void Dialog::resizeEvent(QResizeEvent* event)
+{
+    QDialog::resizeEvent(event);
+    
+    // 如果处于适应窗口模式，重新调整图像大小
+    if (m_fitToWindow && !m_originalPixmap.isNull()) {
+        QTimer::singleShot(100, this, &Dialog::fitImageToWindow);
+   }
+}
+
+/**
+ * @brief 创建服务器连接面板
+ * @return 服务器连接面板布局
+ */
+QLayout* Dialog::createServerConnectionPanel()
+{
+    QGroupBox* connectionGroup = new QGroupBox("🔗 服务器连接");
+    QHBoxLayout* connectionLayout = new QHBoxLayout(connectionGroup);
+    
+    // 创建现代化连接控件
+    m_serverIPEdit = new QLineEdit("192.168.1.31");
+    m_serverPortEdit = new QLineEdit("17777");
+    m_connectBtn = new QPushButton("🔗 开始连接");
+    
+    // 设置控件属性
+    m_serverIPEdit->setPlaceholderText("服务器IP地址");
+    m_serverPortEdit->setPlaceholderText("端口号");
+    m_serverIPEdit->setToolTip("请输入服务器的IP地址");
+    m_serverPortEdit->setToolTip("请输入服务器的端口号 (1-65535)");
+    
+    // 设置连接按钮样式
+    m_connectBtn->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 16px; border-radius: 4px; min-width: 100px; }");
+    
+    // 布局安排
+    connectionLayout->addWidget(new QLabel("服务器IP:"));
+    connectionLayout->addWidget(m_serverIPEdit);
+    connectionLayout->addWidget(new QLabel("端口:"));
+    connectionLayout->addWidget(m_serverPortEdit);
+    connectionLayout->addWidget(m_connectBtn);
+    connectionLayout->addStretch(); // 添加弹性空间
+    
+    // 连接信号
+    connect(m_connectBtn, &QPushButton::clicked, [this]() {
+        QString ipAddress = m_serverIPEdit->text().trimmed();
+        QString portText = m_serverPortEdit->text().trimmed();
+        
+        // 输入验证
+        if (ipAddress.isEmpty()) {
+            qDebug() << "错误：请输入服务器IP地址";
+            m_imageDisplayLabel->setText("❌ 连接失败：请输入服务器IP地址");
+            return;
+        }
+        
+        if (portText.isEmpty()) {
+            qDebug() << "错误：请输入服务器端口号";
+            m_imageDisplayLabel->setText("❌ 连接失败：请输入服务器端口号");
+            return;
+        }
+        
+        // 端口号转换和验证
+        bool ok;
+        int port = portText.toInt(&ok);
+        if (!ok || port <= 0 || port > 65535) {
+            qDebug() << "错误：端口号格式不正确，请输入1-65535范围内的数字";
+            m_imageDisplayLabel->setText("❌ 连接失败：端口号无效\n请输入1-65535范围内的数字");
+            return;
+        }
+        
+        // 显示连接状态信息
+        m_imageDisplayLabel->setText(QString("🔄 正在连接到服务器...\n\nIP：%1\n端口：%2\n\n请稍候...").arg(ipAddress).arg(port));
+        m_connectBtn->setEnabled(false);  // 防止重复点击
+        
+        qDebug() << "用户发起连接请求：" << ipAddress << ":" << port;
+        
+        // 启动TCP连接
+        m_tcpImg.slot_disconnect(); // 先断开现有连接
+        
+        // 启用自动重连（如果勾选了自动重连）
+        if (m_autoReconnectCheckBox && m_autoReconnectCheckBox->isChecked()) {
+            m_tcpImg.setAutoReconnect(true, 5, 3000);
+        }
+        
+        m_tcpImg.start(ipAddress, port);
+        
+        // 3秒后重新启用按钮，防止界面卡住
+        QTimer::singleShot(3000, this, [this]() {
+            if (m_connectBtn) {
+                m_connectBtn->setEnabled(true);
+            }
+        });
+    });
+    
+    QVBoxLayout* layout = new QVBoxLayout();
+    layout->addWidget(connectionGroup);
+    return layout;
 }

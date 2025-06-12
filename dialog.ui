@@ -11,63 +11,8 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Dialog</string>
+   <string>TCP图像传输程序 v2.2.3</string>
   </property>
-  <widget class="QLineEdit" name="lineEditAddr">
-   <property name="geometry">
-    <rect>
-     <x>1420</x>
-     <y>30</y>
-     <width>113</width>
-     <height>20</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>192.168.1.31</string>
-   </property>
-  </widget>
-  <widget class="QLineEdit" name="lineEditPort">
-   <property name="geometry">
-    <rect>
-     <x>1420</x>
-     <y>50</y>
-     <width>113</width>
-     <height>20</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>17777</string>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="pushButtonStart">
-   <property name="geometry">
-    <rect>
-     <x>1430</x>
-     <y>90</y>
-     <width>80</width>
-     <height>25</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Start</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelShowImg">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>10</y>
-     <width>1411</width>
-     <height>881</height>
-    </rect>
-   </property>
-   <property name="frameShape">
-    <enum>QFrame::Box</enum>
-   </property>
-   <property name="text">
-    <string>TextLabel</string>
-   </property>
-  </widget>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <resources/>
