@@ -224,6 +224,11 @@ private slots:
      */
     void updateReconnectProgress();
 
+    /**
+     * @brief 切换控制面板的可见性
+     */
+    void toggleControlsVisibility();
+
 protected:
     /**
      * @brief 窗口大小调整事件
@@ -298,6 +303,12 @@ private:
     double m_currentZoomFactor;         ///< 当前缩放因子
     QPixmap m_originalPixmap;           ///< 原始图像像素图
     bool m_fitToWindow;                 ///< 是否适应窗口模式
+    QTimer* m_resizeTimer;              ///< 用于窗口缩放防抖动的定时器
+
+    // 界面显隐控制
+    QWidget* m_controlsContainer;       ///< 容纳所有可隐藏控件的容器
+    QPushButton* m_toggleControlsBtn;   ///< 用于显示/隐藏控件的按钮
+    bool m_controlsVisible;             ///< 控件是否可见的状态标志
 
     /**
      * @brief 初始化调试界面

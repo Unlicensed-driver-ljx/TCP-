@@ -18,7 +18,11 @@ Dialog::Dialog(QWidget *parent) :
     m_serverPortEdit(nullptr),
     m_connectBtn(nullptr),
     m_currentZoomFactor(1.0),
-    m_fitToWindow(true)
+    m_fitToWindow(true),
+    m_resizeTimer(nullptr),
+    m_controlsContainer(nullptr),
+    m_toggleControlsBtn(nullptr),
+    m_controlsVisible(true)
 {
     // 设置用户界面
     // ui->setupUi(this);  // 不再需要，使用完全现代化界面
@@ -76,6 +80,12 @@ Dialog::Dialog(QWidget *parent) :
     // ui->labelShowImg->setAlignment(Qt::AlignCenter);  // 居中显示文本
     
     qDebug() << "Dialog界面初始化完成，图像缓冲区大小：" << (WIDTH * HEIGHT * CHANLE) << "字节";
+
+    // 初始化缩放防抖动定时器
+    m_resizeTimer = new QTimer(this);
+    m_resizeTimer->setSingleShot(true); // 设置为单次触发
+    m_resizeTimer->setInterval(50);     // 设置50ms延迟
+    connect(m_resizeTimer, &QTimer::timeout, this, &Dialog::fitImageToWindow);
 }
 
 /**
@@ -268,26 +278,33 @@ void Dialog::initDebugInterface()
     // 创建标签页控件
     m_tabWidget = new QTabWidget(this);
     
-    // 创建图像传输标签页（使用当前UI）
+    // 创建图像传输标签页
     m_imageTab = new QWidget();
     QVBoxLayout* imageLayout = new QVBoxLayout(m_imageTab);
     
-    // 将原有的UI控件添加到图像标签页
-    // 使用现代化界面布局
-    QWidget* imageWidget = new QWidget();
-    QVBoxLayout* originalLayout = new QVBoxLayout(imageWidget);
+    // --- 新增：顶部工具栏 ---
+    QHBoxLayout* topToolbarLayout = new QHBoxLayout();
+    m_toggleControlsBtn = new QPushButton("🔼 隐藏控件");
+    m_toggleControlsBtn->setToolTip("显示或隐藏下方的所有控制面板");
+    m_toggleControlsBtn->setStyleSheet("QPushButton { background-color: transparent; border: 1px solid #ccc; padding: 4px 8px; }");
+    connect(m_toggleControlsBtn, &QPushButton::clicked, this, &Dialog::toggleControlsVisibility);
     
-    // 添加现代化服务器连接面板
-    originalLayout->addLayout(createServerConnectionPanel());
+    topToolbarLayout->addWidget(m_toggleControlsBtn);
+    topToolbarLayout->addStretch();
+    imageLayout->addLayout(topToolbarLayout);
+
+    // --- 修改：创建可隐藏的控件容器 ---
+    m_controlsContainer = new QWidget();
+    QVBoxLayout* controlsLayout = new QVBoxLayout(m_controlsContainer);
+    controlsLayout->setContentsMargins(0, 0, 0, 0); // 移除容器的边距
+
+    // 将所有控制面板添加到这个容器中
+    controlsLayout->addLayout(createServerConnectionPanel());
+    controlsLayout->addLayout(createResolutionPanel());
+    controlsLayout->addLayout(createReconnectPanel());
+    controlsLayout->addLayout(createZoomControlPanel());
     
-    // 添加分辨率设置面板
-    originalLayout->addLayout(createResolutionPanel());
-    
-    // 添加重连控制面板
-    originalLayout->addLayout(createReconnectPanel());
-    
-    // 添加图像缩放控制面板
-    originalLayout->addLayout(createZoomControlPanel());
+    imageLayout->addWidget(m_controlsContainer); // 将容器添加到主布局
     
     // 创建图像滚动区域替代原来的labelShowImg
     m_imageScrollArea = new QScrollArea();
@@ -300,9 +317,8 @@ void Dialog::initDebugInterface()
     m_imageScrollArea->setWidgetResizable(false);  // 不自动调整大小，支持滚动
     m_imageScrollArea->setAlignment(Qt::AlignCenter);
     
-    originalLayout->addWidget(m_imageScrollArea, 1);  // 图像显示区占主要空间
+    imageLayout->addWidget(m_imageScrollArea, 1);  // 图像显示区占主要空间
     
-    imageLayout->addWidget(imageWidget);
     m_tabWidget->addTab(m_imageTab, "图像传输");
     
     // 创建网络调试标签页
@@ -1837,6 +1853,9 @@ void Dialog::updateZoomControls()
 /**
  * @brief 窗口大小调整事件
  * @param event 调整大小事件
+ * 
+ * 在窗口大小改变时被调用。如果启用了"适应窗口"模式，
+ * 它会使用一个防抖动定时器来平滑地调整图像大小，避免在快速拖动时性能下降。
  */
 void Dialog::resizeEvent(QResizeEvent* event)
 {
@@ -1844,7 +1863,14 @@ void Dialog::resizeEvent(QResizeEvent* event)
     
     // 如果处于适应窗口模式，重新调整图像大小
     if (m_fitToWindow && !m_originalPixmap.isNull()) {
-        QTimer::singleShot(100, this, &Dialog::fitImageToWindow);
+        // 使用一个 ngắn (e.g., 50ms) 的定时器来延迟缩放操作。
+        // 这可以防止在用户连续拖动窗口大小时过于频繁地调用fitImageToWindow，
+        // 从而获得更平滑的用户体验，并避免性能问题。
+        // 如果已经有一个定时器在等待，我们会先停止它。
+        if (m_resizeTimer->isActive()) {
+            m_resizeTimer->stop();
+        }
+        m_resizeTimer->start();
    }
 }
 
@@ -1933,4 +1959,30 @@ QLayout* Dialog::createServerConnectionPanel()
     QVBoxLayout* layout = new QVBoxLayout();
     layout->addWidget(connectionGroup);
     return layout;
+}
+
+/**
+ * @brief 切换控制面板的可见性
+ *
+ * 当用户点击"隐藏/显示控件"按钮时被调用。
+ * 这个函数会切换所有控制面板的可见状态，并更新按钮的文本和图标，
+ * 以提供清晰的视觉反馈。
+ */
+void Dialog::toggleControlsVisibility()
+{
+    m_controlsVisible = !m_controlsVisible; // 切换状态
+
+    if (m_controlsContainer) {
+        m_controlsContainer->setVisible(m_controlsVisible);
+    }
+
+    if (m_toggleControlsBtn) {
+        if (m_controlsVisible) {
+            m_toggleControlsBtn->setText("🔼 隐藏控件");
+            m_toggleControlsBtn->setToolTip("点击隐藏所有控制面板");
+        } else {
+            m_toggleControlsBtn->setText("🔽 显示控件");
+            m_toggleControlsBtn->setToolTip("点击显示所有控制面板");
+        }
+   }
 }
