@@ -9,6 +9,7 @@
 #include <QNetworkProxy>
 #include <QTimer>
 #include <QDateTime>
+#include <QImage>
 #include "sysdefine.h"
 
 /**
@@ -220,6 +221,11 @@ signals:
     * @param diagnosticInfo 诊断信息文本
     */
    void signalDiagnosticInfo(QString diagnosticInfo);
+
+   // 添加新的信号
+   void signal_showframestruct(const QString &info);
+   void signal_showframeheader(const QString &info);
+
 private:
    QTcpSocket* TCP_sendMesSocket;  ///< TCP套接字对象指针，用于网络通信
    bool m_brefresh;                ///< 刷新标志位，表示是否正在接收数据
@@ -273,10 +279,45 @@ private:
     int findFrameHeader(const QByteArray& data, const QByteArray& header);
     
     /**
+     * @brief 从帧头解析帧大小信息
+     * @param frameHeader 帧头数据（至少6字节）
+     * @return 解析出的帧大小，-1表示解析失败
+     */
+    int parseFrameSize(const QByteArray& frameHeader);
+    
+    /**
+     * @brief 验证帧数据完整性
+     * @param frameData 完整帧数据
+     * @return 如果帧数据有效返回true
+     */
+    bool validateFrameData(const QByteArray& frameData);
+    
+    /**
+     * @brief 图像质量检测功能
+     * @param imageData 图像数据
+     * @return 质量检测报告字符串
+     */
+    QString analyzeImageQuality(const QByteArray& imageData);
+    
+    /**
      * @brief 触发重连逻辑的内部函数
      * @param source 触发源（用于调试日志）
      */
     void triggerReconnectLogic(const QString& source);
+
+    // 添加新的成员变量
+    qint64 m_recvCount;           // 接收数据计数
+    QByteArray m_recvBuffer;      // 接收缓冲区
+    bool m_foundFirstFrame;       // 是否找到第一帧标志
+
+    // 添加新的成员函数
+    void updateImageDisplay(const QByteArray &imageData);
+    
+    /**
+     * @brief 直接显示图像数据（简化版）
+     * @param imageData 图像数据
+     */
+    void updateImageDisplayDirect(const QByteArray &imageData);
 };
 
 #endif // CTCPIMG_H

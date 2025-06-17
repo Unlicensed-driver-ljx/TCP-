@@ -59,6 +59,11 @@ CTCPImg::CTCPImg(QObject *parent)
     connect(m_reconnectTimer, &QTimer::timeout, this, &CTCPImg::slot_reconnect);
     m_reconnectTimer->setSingleShot(true);  // 设置为单次触发
     
+    // 初始化新的成员变量
+    m_recvCount = 0;
+    m_foundFirstFrame = false;
+    m_recvBuffer.clear();
+    
     qDebug() << "CTCPImg对象初始化完成，图像缓冲区大小：" << m_totalsize << "字节";
     qDebug() << "自动重连功能已启用，最大重连次数：" << m_maxReconnectAttempts << "，重连间隔：" << m_reconnectInterval << "ms";
 }
@@ -193,233 +198,205 @@ void CTCPImg::slot_sendmessage()
 }
 
 /**
- * @brief 接收TCP消息的核心处理函数
+ * @brief 接收TCP消息的核心处理函数 - 简化版直接显示模式
  * 
- * 处理从服务器接收到的数据，包括：
- * 1. 解析数据大小信息
- * 2. 累积图像数据
- * 3. 数据完整性检查
- * 4. 发送确认消息
+ * 处理从服务器接收到的数据，支持两种模式：
+ * 1. 直接显示模式：服务器发送的图像数据直接显示
+ * 2. 协议模式：带帧头的完整协议解析
  */
 void CTCPImg::slot_recvmessage()
 {
-    // 检查连接状态
-    if (!m_brefresh || TCP_sendMesSocket->state() != QAbstractSocket::ConnectedState) {
-        qDebug() << "警告：连接状态异常，忽略接收到的数据";
-        return;
-    }
-    
-    QByteArray byteArray = this->TCP_sendMesSocket->readAll();
-
-    // 数据有效性检查
-    if (byteArray.isEmpty()) {
-        qDebug() << "警告：接收到空数据包";
+    // 读取数据
+    QByteArray data = TCP_sendMesSocket->readAll();
+    if(data.isEmpty())
+    {
         return;
     }
 
-    // 第一阶段：解析数据大小信息
-    if (byteArray.contains("size=")) {
-        qDebug() << "🔢 接收到数据大小信息";
-        qDebug() << "📊 size消息原始数据：" << formatDataForDebug(byteArray, byteArray.size());
-        qDebug() << "📊 size消息内容：" << QString(byteArray);
-        qDebug() << "📊 数据包大小：" << byteArray.size() << "字节";
-        
-        // 提取并解析数据大小
-        byteArray = byteArray.replace("size=", "");
-        bool conversionOk = false;
-        int receivedSize = byteArray.toInt(&conversionOk);
-        
-        // 数据大小有效性检查
-        if (!conversionOk) {
-            qDebug() << "❌ 错误：无法解析数据大小信息";
-            return;
-        }
-        
-        if (receivedSize <= 0 || receivedSize > 10 * 1024 * 1024) {  // 限制最大10MB
-            qDebug() << "❌ 错误：数据大小异常：" << receivedSize << "字节";
-            return;
-        }
-        
-        m_totalsize = receivedSize;
-        pictmp.clear();  // 清空之前的数据
-        
-        qDebug() << "✅ 预期接收图像数据大小：" << m_totalsize << "字节";
-        qDebug() << "📏 预期图像参数：" << m_imageWidth << "x" << m_imageHeight << "x" << m_imageChannels;
-        qDebug() << "💾 预期图像大小：" << (m_imageWidth * m_imageHeight * m_imageChannels) << "字节";
-        qDebug() << "🚀 开始接收图像数据...";
-        qDebug() << "-" << QString().fill('-', 60);  // 分隔线
-    }
-    // 第二阶段：累积图像数据
-    else
-    {
-        // 🔍 如果是第一次接收图像数据，打印帧头信息
-        if (pictmp.isEmpty()) {
-            qDebug() << "📷 开始接收新图像帧数据 [第一个数据包]";
-            qDebug() << "📊 帧头数据前20字节：" << formatDataForDebug(byteArray, 20);
-            qDebug() << "📊 第一个数据包大小：" << byteArray.size() << "字节";
-            
-            // 🎯 验证预期的帧头：7E 7E
-            QByteArray expectedHeader;
-            expectedHeader.append(static_cast<char>(0x7E));
-            expectedHeader.append(static_cast<char>(0x7E));
-            
-            bool headerValid = validateFrameHeader(byteArray, expectedHeader);
-            if (headerValid) {
-                qDebug() << "✅ 帧头验证成功！检测到预期的帧头：7E 7E";
-            } else {
-                qDebug() << "❌ 帧头验证失败！未检测到预期的帧头：7E 7E";
-                
-                // 🔍 尝试在数据中搜索帧头
-                int headerPos = findFrameHeader(byteArray, expectedHeader);
-                if (headerPos >= 0) {
-                    qDebug() << QString("🔍 在偏移位置 %1 找到帧头 7E 7E").arg(headerPos);
-                } else {
-                    qDebug() << "🔍 在整个数据包中未找到帧头 7E 7E";
-                }
-                if (byteArray.size() >= 2) {
-                    const unsigned char* data = reinterpret_cast<const unsigned char*>(byteArray.constData());
-                    qDebug() << "❌ 实际帧头前2字节：" << QString("%1 %2")
-                                .arg(data[0], 2, 16, QChar('0')).toUpper()
-                                .arg(data[1], 2, 16, QChar('0')).toUpper();
-                    
-                    // 显示更多字节以便分析
-                    if (byteArray.size() >= 8) {
-                        qDebug() << "❌ 实际帧头前8字节：" << QString("%1 %2 %3 %4 %5 %6 %7 %8")
-                                    .arg(data[0], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[1], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[2], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[3], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[4], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[5], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[6], 2, 16, QChar('0')).toUpper()
-                                    .arg(data[7], 2, 16, QChar('0')).toUpper();
-                    }
-                }
-            }
-            
-            // 检查是否有明显的数据模式
-            if (byteArray.size() >= 4) {
-                // Qt 5.12兼容的字节序转换
-                const unsigned char* data = reinterpret_cast<const unsigned char*>(byteArray.constData());
-                
-                // 手动实现大端转换（网络字节序）
-                quint32 firstFourBytes = (static_cast<quint32>(data[0]) << 24) |
-                                        (static_cast<quint32>(data[1]) << 16) |
-                                        (static_cast<quint32>(data[2]) << 8) |
-                                        static_cast<quint32>(data[3]);
-                qDebug() << "📊 前4字节作为大端整数：" << firstFourBytes;
-                
-                // 手动实现小端转换
-                quint32 firstFourBytesLE = static_cast<quint32>(data[0]) |
-                                          (static_cast<quint32>(data[1]) << 8) |
-                                          (static_cast<quint32>(data[2]) << 16) |
-                                          (static_cast<quint32>(data[3]) << 24);
-                qDebug() << "📊 前4字节作为小端整数：" << firstFourBytesLE;
-                
-                // 额外显示前8个字节的详细信息
-                if (byteArray.size() >= 8) {
-                    QStringList byteValues;
-                    for (int i = 0; i < 8; ++i) {
-                        byteValues << QString("0x%1").arg(data[i], 2, 16, QChar('0')).toUpper();
-                    }
-                    qDebug() << "📊 前8字节详细：" << byteValues.join(" ");
-                }
-            }
-        } else {
-            qDebug() << "📦 继续接收数据包，大小：" << byteArray.size() << "字节";
-        }
-        
-        pictmp.append(byteArray);
-        int currentSize = pictmp.size();
-        qDebug() << "累积接收数据：" << currentSize << "/" << m_totalsize << "字节" 
-                 << "（进度：" << (currentSize * 100.0 / m_totalsize) << "%）";
-        
-        // 数据大小保护检查
-        if (currentSize > m_totalsize + 1024) {  // 允许1KB的缓冲误差
-            qDebug() << "错误：接收数据超出预期大小，可能存在数据传输错误";
-            pictmp.clear();
-            return;
-        }
-    }
-    
-    // 第三阶段：数据接收完成处理
-    if (pictmp.length() == m_totalsize)
-    {
-        qDebug() << "🎯 完整图像帧接收完成！";
-        qDebug() << "📊 完整帧头数据前20字节：" << formatDataForDebug(pictmp, 20);
-        qDebug() << "📊 完整帧尾数据后20字节：" << formatDataForDebug(pictmp.right(20), 20);
-        
-                // 🎯 最终验证完整帧的帧头
-        QByteArray expectedHeader;
-        expectedHeader.append(static_cast<char>(0x7E));
-        expectedHeader.append(static_cast<char>(0x7E));
-        
-        bool finalHeaderValid = validateFrameHeader(pictmp, expectedHeader);
-        if (finalHeaderValid) {
-            qDebug() << "✅ 完整帧头验证成功！确认帧头为：7E 7E";
-            
-            // 🔍 分析帧结构（7E 7E 后面的字节）
-            if (pictmp.size() >= 8) {
-                const unsigned char* data = reinterpret_cast<const unsigned char*>(pictmp.constData());
-                qDebug() << "📊 帧结构分析：";
-                qDebug() << "   - 帧头：7E 7E";
-                qDebug() << QString("   - 第3字节：0x%1").arg(data[2], 2, 16, QChar('0')).toUpper();
-                qDebug() << QString("   - 第4字节：0x%1").arg(data[3], 2, 16, QChar('0')).toUpper();
-                qDebug() << QString("   - 第5字节：0x%1").arg(data[4], 2, 16, QChar('0')).toUpper();
-                qDebug() << QString("   - 第6字节：0x%1").arg(data[5], 2, 16, QChar('0')).toUpper();
-                qDebug() << QString("   - 第7字节：0x%1").arg(data[6], 2, 16, QChar('0')).toUpper();
-                qDebug() << QString("   - 第8字节：0x%1").arg(data[7], 2, 16, QChar('0')).toUpper();
-                
-                // 分析可能的tap模式（假设在第3或第4字节）
-                unsigned char byte3 = data[2];
-                unsigned char byte4 = data[3];
-                
-                if (byte3 == 0x01 || byte4 == 0x01) {
-                    qDebug() << "📊 可能的1tap模式标识";
-                    m_tapMode = 1;
-                } else if (byte3 == 0x02 || byte4 == 0x02) {
-                    qDebug() << "📊 可能的2tap模式标识";
-                    m_tapMode = 2;
-                } else {
-                    qDebug() << "📊 未识别的tap模式";
-                    m_tapMode = 0;
-                }
-            }
-        } else {
-            qDebug() << "❌ 完整帧头验证失败！帧头不匹配：7E 7E";
-        }
-        
-        qDebug() << "📊 图像数据统计信息：";
-        qDebug() << "   - 总大小：" << m_totalsize << "字节";
-        qDebug() << "   - 期望尺寸：" << m_imageWidth << "x" << m_imageHeight << "x" << m_imageChannels;
-        qDebug() << "   - 期望大小：" << (m_imageWidth * m_imageHeight * m_imageChannels) << "字节";
-        
-        // 数据完整性的最终检查
-        int expectedSize = m_imageWidth * m_imageHeight * m_imageChannels;
-        if (m_totalsize > expectedSize) {
-            qDebug() << "警告：接收数据大小超出当前图像缓冲区容量";
-            // 只复制缓冲区容量范围内的数据
-            memcpy(frameBuffer, pictmp.data(), expectedSize);
-        } else {
-            // 将接收到的图像数据复制到帧缓冲区
-            memcpy(frameBuffer, pictmp.data(), m_totalsize);
-        }
-        
-        // 发射图像数据就绪信号，通知界面更新
-        emit tcpImgReadySig();
-        
-        // 向服务器发送确认消息
-        if (TCP_sendMesSocket->state() == QAbstractSocket::ConnectedState) {
-         //   TCP_sendMesSocket->write("OK");
-            TCP_sendMesSocket->flush();  // 确保数据立即发送
-        }
-        
-        qDebug() << "✅ 图像数据接收完成并已更新缓冲区，发送确认消息";
-        qDebug() << "=" << QString().fill('=', 60);  // 分隔线
-        
-        // 清空临时缓冲区，准备接收下一帧
+    // 更新接收计数
+    m_recvCount += data.size();
+    qDebug() << "🔗 接收到数据包，大小：" << data.size() << "字节";
+    qDebug() << "🔗 累积接收数据：" << m_recvCount << "字节";
+
+    // 将新数据添加到缓冲区
+    m_recvBuffer.append(data);
+
+    // 检查是否包含size=指令（旧协议兼容）
+    if (data.contains("size=")) {
+        QByteArray sizeData = data;
+        sizeData = sizeData.replace("size=", "");
+        m_totalsize = sizeData.toInt();
         pictmp.clear();
+        m_recvBuffer.clear();
+        TCP_sendMesSocket->write("OK");
+        TCP_sendMesSocket->waitForBytesWritten();
+        qDebug() << "📏 接收到大小指令：" << m_totalsize << "字节";
+        return;
     }
+
+    // 模式1：直接图像数据模式（推荐）
+    // 如果接收的数据大小等于预期图像大小，直接显示
+    if (m_recvBuffer.size() == m_totalsize) {
+        qDebug() << "✅ 直接模式：接收到完整图像数据，直接显示";
+        updateImageDisplayDirect(m_recvBuffer);
+        m_recvBuffer.clear();
+        
+        // 发送确认（如果服务器需要）
+        TCP_sendMesSocket->write("OK");
+        TCP_sendMesSocket->waitForBytesWritten();
+        return;
+    }
+    
+    // 模式2：检查是否为纯图像数据（无帧头）
+    if (m_recvBuffer.size() >= m_totalsize) {
+        // 检查数据是否看起来像图像数据（无明显的帧头）
+        bool hasFrameHeader = false;
+        if (m_recvBuffer.size() >= 2) {
+            unsigned char byte0 = static_cast<unsigned char>(m_recvBuffer[0]);
+            unsigned char byte1 = static_cast<unsigned char>(m_recvBuffer[1]);
+            hasFrameHeader = (byte0 == 0x7E && byte1 == 0x7E);
+        }
+        
+        if (!hasFrameHeader) {
+            // 纯图像数据，取前面的图像部分
+            QByteArray imageData = m_recvBuffer.left(m_totalsize);
+            qDebug() << "✅ 纯图像模式：提取" << imageData.size() << "字节图像数据显示";
+            updateImageDisplayDirect(imageData);
+            
+            // 移除已处理的数据
+            m_recvBuffer = m_recvBuffer.mid(m_totalsize);
+            
+            // 发送确认
+            TCP_sendMesSocket->write("OK");
+            TCP_sendMesSocket->waitForBytesWritten();
+            return;
+        }
+    }
+
+    // 模式3：协议模式（带帧头7E 7E）
+    if (!m_foundFirstFrame) {
+        // 查找帧头 7E 7E
+        int frameStart = m_recvBuffer.indexOf(QByteArray::fromHex("7E7E"));
+        if (frameStart != -1) {
+            m_foundFirstFrame = true;
+            m_recvBuffer = m_recvBuffer.mid(frameStart);
+            qDebug() << "🔗 协议模式：找到帧头，开始协议解析";
+        } else {
+            // 如果缓冲区太大且没找到帧头，可能是纯图像数据
+            if (m_recvBuffer.size() >= m_totalsize) {
+                qDebug() << "🔄 未找到帧头，尝试作为纯图像数据处理";
+                QByteArray imageData = m_recvBuffer.left(m_totalsize);
+                updateImageDisplayDirect(imageData);
+                m_recvBuffer = m_recvBuffer.mid(m_totalsize);
+                
+                TCP_sendMesSocket->write("OK");
+                TCP_sendMesSocket->waitForBytesWritten();
+            } else if (m_recvBuffer.size() > 1024 * 1024) {
+                qDebug() << "⚠️ 缓冲区过大，清空重新开始";
+                m_recvBuffer.clear();
+            }
+            return;
+        }
+    }
+
+    // 协议模式的完整性检查
+    if (m_foundFirstFrame && m_recvBuffer.size() >= 6) {
+        int expectedFrameSize = parseFrameSize(m_recvBuffer.left(6));
+        
+        if (expectedFrameSize > 0 && m_recvBuffer.size() >= expectedFrameSize) {
+            qDebug() << "✅ 协议模式：完整帧接收完成";
+            
+            QByteArray completeFrame = m_recvBuffer.left(expectedFrameSize);
+            
+            if (validateFrameData(completeFrame)) {
+                QByteArray imageData = completeFrame.mid(6);
+                updateImageDisplayDirect(imageData);
+                qDebug() << "✅ 协议模式：图像更新成功";
+            } else {
+                qDebug() << "❌ 协议模式：帧数据验证失败";
+            }
+            
+            m_recvBuffer = m_recvBuffer.mid(expectedFrameSize);
+            
+            // 发送确认
+            TCP_sendMesSocket->write("OK");
+            TCP_sendMesSocket->waitForBytesWritten();
+            
+            // 处理剩余数据
+            if (!m_recvBuffer.isEmpty() && m_recvBuffer.size() > 6) {
+                QTimer::singleShot(0, this, &CTCPImg::slot_recvmessage);
+            }
+        } else {
+            qDebug() << "⏳ 协议模式：等待更多数据，当前" << m_recvBuffer.size() << "/" << expectedFrameSize << "字节";
+        }
+    }
+}
+
+/**
+ * @brief 直接显示图像数据（简化版）
+ * @param imageData 图像数据
+ */
+void CTCPImg::updateImageDisplayDirect(const QByteArray &imageData)
+{
+    if (imageData.isEmpty()) {
+        qDebug() << "⚠️ 图像数据为空";
+        return;
+    }
+    
+    // 检查数据大小
+    if (imageData.size() != m_totalsize) {
+        qDebug() << QString("⚠️ 图像数据大小不匹配：期望%1，实际%2")
+                    .arg(m_totalsize).arg(imageData.size());
+        
+        // 如果数据偏大，截取前面部分
+        if (imageData.size() > m_totalsize) {
+            QByteArray truncatedData = imageData.left(m_totalsize);
+            memcpy(frameBuffer, truncatedData.data(), m_totalsize);
+            qDebug() << "🔧 数据截取：使用前" << m_totalsize << "字节";
+        } else {
+            // 数据偏小，填充剩余部分为0
+            memcpy(frameBuffer, imageData.data(), imageData.size());
+            memset(frameBuffer + imageData.size(), 0, m_totalsize - imageData.size());
+            qDebug() << "🔧 数据填充：填充" << (m_totalsize - imageData.size()) << "字节零值";
+        }
+    } else {
+        // 大小完全匹配，直接复制
+        memcpy(frameBuffer, imageData.data(), imageData.size());
+        qDebug() << "✅ 完美匹配：图像数据大小正确";
+    }
+    
+    // 执行快速图像质量检查
+    const unsigned char* pixels = reinterpret_cast<const unsigned char*>(frameBuffer);
+    int totalPixels = m_imageWidth * m_imageHeight;
+    
+    if (totalPixels > 0) {
+        // 快速统计前1000个像素
+        int sampleSize = qMin(1000, totalPixels);
+        long long totalValue = 0;
+        int brightPixels = 0;
+        
+        for (int i = 0; i < sampleSize; i++) {
+            unsigned char pixelValue = pixels[i * m_imageChannels];
+            totalValue += pixelValue;
+            if (pixelValue > 200) brightPixels++;
+        }
+        
+        double avgBrightness = totalValue / (double)sampleSize;
+        double brightRatio = brightPixels * 100.0 / sampleSize;
+        
+        qDebug() << QString("📊 图像质量：平均亮度=%.1f，亮像素=%.1f%%")
+                    .arg(avgBrightness).arg(brightRatio);
+        
+        if (brightRatio > 70) {
+            qDebug() << "🌞 检测到高亮度图像";
+        } else if (avgBrightness < 50) {
+            qDebug() << "🌙 检测到低亮度图像";
+        }
+    }
+    
+    // 更新图像显示
+    emit tcpImgReadySig();
+    qDebug() << "✅ 图像显示更新完成";
 }
 
 /**
@@ -1044,6 +1021,211 @@ void CTCPImg::reconnectNow()
     
     // 立即尝试重连
     slot_reconnect();
+}
+
+void CTCPImg::updateImageDisplay(const QByteArray &imageData)
+{
+    // 将接收到的数据复制到帧缓冲区
+    if (imageData.size() <= m_totalsize) {
+        memcpy(frameBuffer, imageData.data(), imageData.size());
+        
+        // 执行图像质量分析
+        QString qualityReport = analyzeImageQuality(imageData);
+        qDebug() << qualityReport;
+        
+        // 更新图像显示
+        emit tcpImgReadySig();
+        qDebug() << "✅ 图像显示更新成功，数据大小：" << imageData.size() << "字节";
+    } else {
+        qDebug() << "⚠️ 警告：接收到的数据大小超过缓冲区大小，期望：" << m_totalsize << "，实际：" << imageData.size();
+    }
+}
+
+/**
+ * @brief 从帧头解析帧大小信息
+ * @param frameHeader 帧头数据（至少6字节）
+ * @return 解析出的帧大小，-1表示解析失败
+ */
+int CTCPImg::parseFrameSize(const QByteArray& frameHeader)
+{
+    if (frameHeader.size() < 6) {
+        qDebug() << "🔍 帧头数据不足，无法解析帧大小";
+        return -1;
+    }
+    
+    // 验证帧头标识符 7E 7E
+    if (frameHeader[0] != (char)0x7E || frameHeader[1] != (char)0x7E) {
+        qDebug() << "🔍 帧头标识符不匹配";
+        return -1;
+    }
+    
+    // 分析帧头结构（根据实际协议调整）
+    unsigned char byte2 = static_cast<unsigned char>(frameHeader[2]);
+    unsigned char byte3 = static_cast<unsigned char>(frameHeader[3]);
+    unsigned char byte4 = static_cast<unsigned char>(frameHeader[4]);
+    unsigned char byte5 = static_cast<unsigned char>(frameHeader[5]);
+    
+    qDebug() << QString("🔍 帧头字节分析：[7E 7E %1 %2 %3 %4]")
+                .arg(byte2, 2, 16, QChar('0')).toUpper()
+                .arg(byte3, 2, 16, QChar('0')).toUpper()
+                .arg(byte4, 2, 16, QChar('0')).toUpper()
+                .arg(byte5, 2, 16, QChar('0')).toUpper();
+    
+    // 方案1：字节4-5作为大端序16位长度
+    int size1 = (byte4 << 8) | byte5;
+    
+    // 方案2：字节2-3作为大端序16位长度
+    int size2 = (byte2 << 8) | byte3;
+    
+    // 方案3：字节4-5作为小端序16位长度
+    int size3 = (byte5 << 8) | byte4;
+    
+    // 方案4：使用预设的图像大小
+    int size4 = m_totalsize + 6; // 图像数据 + 帧头
+    
+    qDebug() << QString("🔍 大小解析方案：");
+    qDebug() << QString("🔍   方案1(byte4-5大端)：%1 字节").arg(size1);
+    qDebug() << QString("🔍   方案2(byte2-3大端)：%2 字节").arg(size2);
+    qDebug() << QString("🔍   方案3(byte4-5小端)：%3 字节").arg(size3);
+    qDebug() << QString("🔍   方案4(预设大小)：%4 字节").arg(size4);
+    
+    // 选择最合理的大小（接近预期图像大小的方案）
+    int expectedImageSize = m_totalsize;
+    int bestSize = size4; // 默认使用预设大小
+    
+    // 检查哪个方案最接近预期
+    QList<int> sizes = {size1, size2, size3, size4};
+    for (int size : sizes) {
+        if (size >= expectedImageSize && size <= expectedImageSize + 100) {
+            bestSize = size;
+            qDebug() << QString("🔍 选择最佳匹配方案：%1 字节").arg(bestSize);
+            break;
+        }
+    }
+    
+    return bestSize;
+}
+
+/**
+ * @brief 验证帧数据完整性
+ * @param frameData 完整帧数据
+ * @return 如果帧数据有效返回true
+ */
+bool CTCPImg::validateFrameData(const QByteArray& frameData)
+{
+    if (frameData.size() < 6) {
+        qDebug() << "🔍 帧数据太小，验证失败";
+        return false;
+    }
+    
+    // 验证帧头
+    if (frameData[0] != (char)0x7E || frameData[1] != (char)0x7E) {
+        qDebug() << "🔍 帧头验证失败";
+        return false;
+    }
+    
+    // 验证图像数据大小
+    int imageDataSize = frameData.size() - 6;
+    if (imageDataSize != m_totalsize) {
+        qDebug() << QString("🔍 图像数据大小不匹配：期望%1，实际%2")
+                    .arg(m_totalsize).arg(imageDataSize);
+        return false;
+    }
+    
+    qDebug() << "🔍 帧数据验证通过 ✅";
+    return true;
+}
+
+/**
+ * @brief 图像质量检测功能
+ * @param imageData 图像数据
+ * @return 质量检测报告
+ */
+QString CTCPImg::analyzeImageQuality(const QByteArray& imageData)
+{
+    if (imageData.isEmpty()) {
+        return "❌ 图像数据为空";
+    }
+    
+    QStringList report;
+    report << "📊 图像质量分析报告：";
+    
+    // 基本统计
+    int totalPixels = m_imageWidth * m_imageHeight;
+    int totalChannels = m_imageChannels;
+    int expectedSize = totalPixels * totalChannels;
+    
+    report << QString("   📏 预期尺寸：%1x%2x%3 (%4字节)")
+              .arg(m_imageWidth).arg(m_imageHeight).arg(totalChannels).arg(expectedSize);
+    report << QString("   📦 实际大小：%1字节").arg(imageData.size());
+    
+    if (imageData.size() != expectedSize) {
+        report << QString("   ⚠️ 大小不匹配！差异：%1字节").arg(imageData.size() - expectedSize);
+        return report.join("\n");
+    }
+    
+    // 像素值分析
+    const unsigned char* pixels = reinterpret_cast<const unsigned char*>(imageData.data());
+    int darkPixels = 0;   // 暗像素 (< 50)
+    int brightPixels = 0; // 亮像素 (> 200)
+    int midPixels = 0;    // 中间值像素
+    
+    long long totalValue = 0;
+    int minValue = 255, maxValue = 0;
+    
+    for (int i = 0; i < totalPixels; i++) {
+        unsigned char pixelValue = pixels[i * totalChannels]; // 取第一通道
+        
+        totalValue += pixelValue;
+        if (pixelValue < minValue) minValue = pixelValue;
+        if (pixelValue > maxValue) maxValue = pixelValue;
+        
+        if (pixelValue < 50) {
+            darkPixels++;
+        } else if (pixelValue > 200) {
+            brightPixels++;
+        } else {
+            midPixels++;
+        }
+    }
+    
+    double avgValue = totalValue / (double)totalPixels;
+    double darkRatio = darkPixels * 100.0 / totalPixels;
+    double brightRatio = brightPixels * 100.0 / totalPixels;
+    double midRatio = midPixels * 100.0 / totalPixels;
+    
+    report << QString("   💡 亮度统计：平均=%1，最小=%2，最大=%3")
+              .arg(avgValue, 0, 'f', 1).arg(minValue).arg(maxValue);
+    report << QString("   🌙 暗像素：%1% (%2个)").arg(darkRatio, 0, 'f', 1).arg(darkPixels);
+    report << QString("   🌞 亮像素：%1% (%2个)").arg(brightRatio, 0, 'f', 1).arg(brightPixels);
+    report << QString("   🌤️ 中间值：%1% (%2个)").arg(midRatio, 0, 'f', 1).arg(midPixels);
+    
+    // 判断图像特征
+    if (brightRatio > 60) {
+        report << "   ⚠️ 检测到高亮度图像（可能导致分屏问题）";
+    } else if (darkRatio > 80) {
+        report << "   ✅ 检测到低亮度图像（正常显示）";
+    } else {
+        report << "   ℹ️ 检测到混合亮度图像";
+    }
+    
+    // 数据连续性检查（检测是否有分屏现象）
+    int discontinuities = 0;
+    for (int i = 1; i < qMin(1000, totalPixels); i++) { // 检查前1000个像素
+        unsigned char current = pixels[i * totalChannels];
+        unsigned char previous = pixels[(i-1) * totalChannels];
+        if (abs(current - previous) > 100) { // 相邻像素差异过大
+            discontinuities++;
+        }
+    }
+    
+    if (discontinuities > 50) {
+        report << QString("   ⚠️ 检测到%1个像素跳变（可能的分屏迹象）").arg(discontinuities);
+    } else {
+        report << "   ✅ 像素连续性正常";
+    }
+    
+    return report.join("\n");
 }
 
 

@@ -38,7 +38,7 @@ SOURCES += \
 
 HEADERS += \
         dialog.h \
-        ctcpimg.h \
+    ctcpimg.h \
         sysdefine.h \
         dataformatter.h \
         tcpdebugger.h
