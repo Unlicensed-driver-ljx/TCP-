@@ -22,7 +22,32 @@ Dialog::Dialog(QWidget *parent) :
     m_resizeTimer(nullptr),
     m_controlsContainer(nullptr),
     m_toggleControlsBtn(nullptr),
-    m_controlsVisible(true)
+    m_controlsVisible(true),
+    // 指令调试相关初始化
+    m_serialPortCombo(nullptr),
+    m_baudRateCombo(nullptr),
+    m_refreshPortBtn(nullptr),
+    m_connectSerialBtn(nullptr),
+    m_serialStatusLabel(nullptr),
+    m_currentTimeLabel(nullptr),
+    m_displayOnCheckBox(nullptr),
+    m_sendTimeBtn(nullptr),
+    m_timeCommandPreview(nullptr),
+    m_customCommandEdit(nullptr),
+    m_sendCustomBtn(nullptr),
+    m_hexModeCheckBox(nullptr),
+    m_commandReceiveDisplay(nullptr),
+    m_commandSendDisplay(nullptr),
+    m_clearCommandBtn(nullptr),
+    m_commandStatsLabel(nullptr),
+    m_serialPort(nullptr),
+    m_timeUpdateTimer(nullptr),
+    m_autoSwitchTimer(nullptr),
+    m_totalBytesSent(0),
+    m_totalBytesReceived(0),
+    m_commandCount(0),
+    m_autoSwitchEnabled(false),
+    m_currentDisplayState(true)
 {
     // 设置用户界面
     // ui->setupUi(this);  // 不再需要，使用完全现代化界面
@@ -43,6 +68,19 @@ Dialog::Dialog(QWidget *parent) :
             this, &Dialog::onDebugDataReceived);
     connect(m_tcpDebugger, &CTCPDebugger::connectionStateChanged, 
             this, &Dialog::onDebugConnectionStateChanged);
+    
+    // 初始化串口对象
+    m_serialPort = new QSerialPort(this);
+    
+    // 初始化时间更新定时器
+    m_timeUpdateTimer = new QTimer(this);
+    connect(m_timeUpdateTimer, &QTimer::timeout, this, &Dialog::updateTimeDisplay);
+    m_timeUpdateTimer->start(500);  // 每500毫秒更新时间，确保显示流畅
+    
+    // 初始化自动切换定时器
+    m_autoSwitchTimer = new QTimer(this);
+    connect(m_autoSwitchTimer, &QTimer::timeout, this, &Dialog::autoSwitchDisplay);
+    // 定时器默认不启动，由按钮控制
     
     // 初始化调试界面
     initDebugInterface();
@@ -97,6 +135,12 @@ Dialog::~Dialog()
 {
     // 释放UI资源（已使用现代化界面）
     // delete ui;
+    
+    // 关闭串口连接
+    if (m_serialPort && m_serialPort->isOpen()) {
+        m_serialPort->close();
+        qDebug() << "串口连接已关闭";
+    }
     
     // 释放图像显示缓冲区
     if (m_showBuffer != nullptr) {
@@ -332,6 +376,10 @@ void Dialog::initDebugInterface()
     debugLayout->addLayout(createDebugDataPanel());
     
     m_tabWidget->addTab(m_debugTab, "网络调试");
+    
+    // 创建指令调试标签页
+    createCommandTab();
+    m_tabWidget->addTab(m_commandTab, "指令调试");
     
     // 重新设置主窗口布局
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
@@ -1986,3 +2034,945 @@ void Dialog::toggleControlsVisibility()
         }
    }
 }
+
+/**
+ * @brief 创建指令调试标签页内容
+ */
+void Dialog::createCommandTab()
+{
+    m_commandTab = new QWidget();
+    QHBoxLayout* mainLayout = new QHBoxLayout(m_commandTab);
+    
+    // 左侧：控制面板
+    QVBoxLayout* leftLayout = new QVBoxLayout();
+    
+    // 串口设置组
+    QGroupBox* serialGroup = new QGroupBox("🔌 串口设置");
+    QGridLayout* serialLayout = new QGridLayout(serialGroup);
+    
+    // 串口选择
+    serialLayout->addWidget(new QLabel("串口:"), 0, 0);
+    QHBoxLayout* portLayout = new QHBoxLayout();
+    m_serialPortCombo = new QComboBox();
+    m_serialPortCombo->setMinimumWidth(120);
+    
+    m_refreshPortBtn = new QPushButton("🔄");
+    m_refreshPortBtn->setFixedSize(30, 25);
+    m_refreshPortBtn->setToolTip("刷新串口列表");
+    
+    portLayout->addWidget(m_serialPortCombo);
+    portLayout->addWidget(m_refreshPortBtn);
+    
+    QWidget* portWidget = new QWidget();
+    portWidget->setLayout(portLayout);
+    serialLayout->addWidget(portWidget, 0, 1);
+    
+    // 波特率
+    serialLayout->addWidget(new QLabel("波特率:"), 1, 0);
+    m_baudRateCombo = new QComboBox();
+    m_baudRateCombo->addItems({"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"});
+    m_baudRateCombo->setCurrentText("115200");
+    serialLayout->addWidget(m_baudRateCombo, 1, 1);
+    
+    // 连接按钮和状态
+    m_connectSerialBtn = new QPushButton("📡 打开串口");
+    m_connectSerialBtn->setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; }");
+    serialLayout->addWidget(m_connectSerialBtn, 2, 0, 1, 2);
+    
+    m_serialStatusLabel = new QLabel("🔴 未连接");
+    m_serialStatusLabel->setAlignment(Qt::AlignCenter);
+    m_serialStatusLabel->setStyleSheet("QLabel { color: #E74C3C; font-weight: bold; }");
+    serialLayout->addWidget(m_serialStatusLabel, 3, 0, 1, 2);
+    
+    leftLayout->addWidget(serialGroup);
+    
+    // 时间字符显示组
+    QGroupBox* timeGroup = new QGroupBox("🕐 时间字符显示");
+    QVBoxLayout* timeLayout = new QVBoxLayout(timeGroup);
+    
+    // 当前时间显示
+    m_currentTimeLabel = new QLabel();
+    m_currentTimeLabel->setAlignment(Qt::AlignCenter);
+    m_currentTimeLabel->setStyleSheet("QLabel { font-size: 14px; color: #2C3E50; border: 1px solid #BDC3C7; padding: 8px; border-radius: 3px; background-color: #ECF0F1; }");
+    timeLayout->addWidget(m_currentTimeLabel);
+    
+    // 字符显示开关
+    m_displayOnCheckBox = new QCheckBox("启用字符显示");
+    m_displayOnCheckBox->setChecked(true);
+    timeLayout->addWidget(m_displayOnCheckBox);
+    
+    // 指令预览
+    timeLayout->addWidget(new QLabel("指令预览 (39字节):"));
+    m_timeCommandPreview = new QLineEdit();
+    m_timeCommandPreview->setReadOnly(true);
+    m_timeCommandPreview->setFont(QFont("Consolas", 9));
+    timeLayout->addWidget(m_timeCommandPreview);
+    
+    // 发送按钮组
+    QHBoxLayout* sendButtonLayout = new QHBoxLayout();
+    
+    // 发送开启字符显示指令按钮
+    m_sendTimeBtn = new QPushButton("⏰ 发送开启字符显示");
+    m_sendTimeBtn->setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; }");
+    sendButtonLayout->addWidget(m_sendTimeBtn);
+    
+    // 发送关闭字符显示指令按钮
+    m_sendTimeOffBtn = new QPushButton("🚫 发送关闭字符显示");
+    m_sendTimeOffBtn->setStyleSheet("QPushButton { background-color: #E74C3C; color: white; font-weight: bold; }");
+    sendButtonLayout->addWidget(m_sendTimeOffBtn);
+    
+    // 自动切换字符显示按钮
+    m_autoSwitchBtn = new QPushButton("🔄 开始自动切换");
+    m_autoSwitchBtn->setStyleSheet("QPushButton { background-color: #3498DB; color: white; font-weight: bold; }");
+    m_autoSwitchBtn->setToolTip("每秒钟自动在开启和关闭字符显示之间切换");
+    sendButtonLayout->addWidget(m_autoSwitchBtn);
+    
+    timeLayout->addLayout(sendButtonLayout);
+    
+    // 说明文字
+    QLabel* infoLabel = new QLabel("📝 指令格式说明 (39字节):\n"
+                                   "• 字节0-3: 90 EB 64 00 (固定帧头)\n"
+                                   "• 字节4-5: 完整年份 (高字节+低字节)\n"
+                                   "• 字节6-7: 月和日\n"
+                                   "• 字节8: 0F (控制字符显示)\n"
+                                   "• 字节9: 00=打开显示, 01=关闭显示\n"
+                                   "• 字节10-13: 时分秒毫秒(÷10)\n"
+                                   "• 字节14-37: 随意填充 (共24字节)\n"
+                                   "• 字节38: 前38字节总和校验(低8位)");
+    infoLabel->setStyleSheet("QLabel { font-size: 9px; color: #7F8C8D; }");
+    infoLabel->setWordWrap(true);
+    timeLayout->addWidget(infoLabel);
+    
+    leftLayout->addWidget(timeGroup);
+    
+    // 自定义指令组
+    QGroupBox* customGroup = new QGroupBox("🎯 自定义指令");
+    QVBoxLayout* customLayout = new QVBoxLayout(customGroup);
+    
+    // 指令输入
+    customLayout->addWidget(new QLabel("指令数据:"));
+    m_customCommandEdit = new QLineEdit();
+    m_customCommandEdit->setPlaceholderText("输入指令 (如: AA BB CC 或 Hello World)");
+    customLayout->addWidget(m_customCommandEdit);
+    
+    // 选项
+    m_hexModeCheckBox = new QCheckBox("16进制模式");
+    m_hexModeCheckBox->setChecked(true);
+    customLayout->addWidget(m_hexModeCheckBox);
+    
+    // 发送按钮
+    m_sendCustomBtn = new QPushButton("📤 发送自定义指令");
+    m_sendCustomBtn->setStyleSheet("QPushButton { background-color: #8E44AD; color: white; font-weight: bold; }");
+    customLayout->addWidget(m_sendCustomBtn);
+    
+    leftLayout->addWidget(customGroup);
+    leftLayout->addStretch();
+    
+    // 右侧：数据监控面板
+    QVBoxLayout* rightLayout = new QVBoxLayout();
+    
+    QGroupBox* monitorGroup = new QGroupBox("📊 数据监控");
+    QVBoxLayout* monitorLayout = new QVBoxLayout(monitorGroup);
+    
+    // 发送数据显示
+    monitorLayout->addWidget(new QLabel("📤 发送数据:"));
+    m_commandSendDisplay = new QTextEdit();
+    m_commandSendDisplay->setMaximumHeight(120);
+    m_commandSendDisplay->setReadOnly(true);
+    m_commandSendDisplay->setFont(QFont("Consolas", 9));
+    m_commandSendDisplay->setPlainText("等待发送数据...");
+    monitorLayout->addWidget(m_commandSendDisplay);
+    
+    // 接收数据显示
+    monitorLayout->addWidget(new QLabel("📥 接收数据:"));
+    m_commandReceiveDisplay = new QTextEdit();
+    m_commandReceiveDisplay->setReadOnly(true);
+    m_commandReceiveDisplay->setFont(QFont("Consolas", 9));
+    m_commandReceiveDisplay->setPlainText("等待接收数据...");
+    monitorLayout->addWidget(m_commandReceiveDisplay);
+    
+    // 控制按钮
+    QHBoxLayout* buttonLayout = new QHBoxLayout();
+    m_clearCommandBtn = new QPushButton("🗑️ 清空接收区");
+    m_clearCommandBtn->setStyleSheet("QPushButton { background-color: #C0392B; color: white; font-weight: bold; }");
+    buttonLayout->addWidget(m_clearCommandBtn);
+    buttonLayout->addStretch();
+    monitorLayout->addLayout(buttonLayout);
+    
+    // 统计信息
+    m_commandStatsLabel = new QLabel("📊 统计: 发送0字节 | 接收0字节 | 指令0条");
+    m_commandStatsLabel->setStyleSheet("QLabel { color: #7F8C8D; font-size: 10px; }");
+    monitorLayout->addWidget(m_commandStatsLabel);
+    
+    rightLayout->addWidget(monitorGroup);
+    
+    // 布局安排
+    mainLayout->addLayout(leftLayout, 1);
+    mainLayout->addLayout(rightLayout, 1);
+    
+    // 连接信号
+    connect(m_refreshPortBtn, &QPushButton::clicked, this, &Dialog::refreshSerialPorts);
+    connect(m_connectSerialBtn, &QPushButton::clicked, this, &Dialog::toggleSerialConnection);
+    connect(m_displayOnCheckBox, &QCheckBox::toggled, this, &Dialog::onCommandDisplayStateChanged);
+    connect(m_sendTimeBtn, &QPushButton::clicked, this, &Dialog::sendTimeDisplayCommand);
+    connect(m_sendTimeOffBtn, &QPushButton::clicked, this, &Dialog::sendTimeOffCommand);
+    connect(m_autoSwitchBtn, &QPushButton::clicked, this, &Dialog::toggleAutoDisplaySwitch);
+    connect(m_sendCustomBtn, &QPushButton::clicked, this, &Dialog::sendCustomCommand);
+    connect(m_clearCommandBtn, &QPushButton::clicked, this, &Dialog::clearCommandData);
+    
+    // 连接串口信号
+#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
+    connect(m_serialPort, &QSerialPort::errorOccurred, this, &Dialog::onCommandSerialError);
+#else
+    connect(m_serialPort, static_cast<void(QSerialPort::*)(QSerialPort::SerialPortError)>(&QSerialPort::error), this, &Dialog::onCommandSerialError);
+#endif
+    connect(m_serialPort, &QSerialPort::readyRead, this, &Dialog::onCommandSerialDataReceived);
+    
+    // 初始化串口列表
+    refreshSerialPorts();
+    
+    qDebug() << "🎛️ 指令调试标签页创建完成";
+}
+
+/**
+ * @brief 生成39字节时间字符显示指令
+ * @param dateTime 指定的时间，如果为空则使用当前时间
+ * @return 生成的39字节指令数据
+ * 
+ * 根据指定时间生成标准的39字节时间字符显示指令。
+ * 新的指令格式（39字节）：
+ * - 字节0-3: 90 EB 64 00 (固定帧头)
+ * - 字节4-5: 年份 (完整年份，如2025 → 4=0xE9, 5=0x07)
+ * - 字节6-7: 月和日 (6=月, 7=日)
+ * - 字节8: 0F (控制字符显示)
+ * - 字节9: 00=打开显示, 01=关闭显示
+ * - 字节10-13: 时分秒毫秒 (10=时, 11=分, 12=秒, 13=毫秒/10)
+ * - 字节14-37: 随意填充 (使用00，共24个字节)
+ * - 字节38: 前38字节总和校验(低8位)
+ */
+QByteArray Dialog::generateTimeDisplayCommand(const QDateTime& dateTime)
+{
+    // 使用当前时间或指定时间
+    QDateTime useTime = dateTime.isValid() ? dateTime : QDateTime::currentDateTime();
+    
+    QByteArray command;
+    command.reserve(39);  // 预分配39字节空间
+    
+    // 字节0-3: 固定帧头 90 EB 64 00
+    command.append(static_cast<char>(0x90));
+    command.append(static_cast<char>(0xEB));
+    command.append(static_cast<char>(0x64));
+    command.append(static_cast<char>(0x00));
+    
+    // 字节4-5: 年份 (完整年份，小端序：低字节在前)
+    int year = useTime.date().year();          // 完整年份 (如2025)
+    command.append(static_cast<char>(year & 0xFF));         // 年份低字节在前
+    command.append(static_cast<char>((year >> 8) & 0xFF));  // 年份高字节在后
+    
+    // 字节6-7: 月和日 (十进制值直接编码)
+    int month = useTime.date().month();        // 月份 1-12
+    int day = useTime.date().day();            // 日期 1-31
+    command.append(static_cast<char>(month));
+    command.append(static_cast<char>(day));
+    
+    // 字节8: 0F (控制字符显示)
+    command.append(static_cast<char>(0x0F));
+    
+    // 字节9: 00=打开显示, 01=关闭显示
+    bool displayOn = m_displayOnCheckBox ? m_displayOnCheckBox->isChecked() : true;
+    command.append(static_cast<char>(displayOn ? 0x00 : 0x01));
+    
+    // 字节10-13: 时分秒毫秒
+    int hour = useTime.time().hour();          // 小时 0-23
+    int minute = useTime.time().minute();      // 分钟 0-59
+    int second = useTime.time().second();      // 秒数 0-59
+    int msec = useTime.time().msec();          // 毫秒 0-999
+    
+    command.append(static_cast<char>(hour));
+    command.append(static_cast<char>(minute));
+    command.append(static_cast<char>(second));
+    command.append(static_cast<char>(msec / 10));  // 毫秒/10，范围0-99
+    
+    // 字节14-37: 随意填充 (使用00，共24个字节)
+    for (int i = 14; i < 38; ++i) {
+        command.append(static_cast<char>(0x00));
+    }
+    
+    // 字节38: 前38字节总和校验(低8位)
+    unsigned int checksum = 0;
+    for (int i = 0; i < 38; ++i) {
+        checksum += static_cast<unsigned char>(command[i]);
+    }
+    command.append(static_cast<char>(checksum & 0xFF));
+    
+    // 验证指令长度并调试输出
+    qDebug() << "🔍 生成指令长度:" << command.size() << "字节";
+    if (command.size() != 39) {
+        qDebug() << "❌ 警告：指令长度不是39字节！实际长度:" << command.size();
+    }
+    
+    // 调试输出每个字节的详细信息
+    QString debugHex;
+    for (int i = 0; i < command.size(); ++i) {
+        debugHex += QString("%1 ").arg(static_cast<unsigned char>(command[i]), 2, 16, QChar('0')).toUpper();
+    }
+    qDebug() << "🔍 生成的指令数据:" << debugHex.trimmed();
+    
+    Q_ASSERT(command.size() == 39);
+    
+    return command;
+}
+
+/**
+ * @brief 生成39字节关闭字符显示指令
+ * @param dateTime 指定的时间，如果为空则使用当前时间
+ * @return 生成的39字节关闭显示指令数据
+ * 
+ * 根据指定时间生成标准的39字节关闭字符显示指令。
+ * 指令格式与显示指令完全相同，只是第9字节设为01（关闭显示）：
+ * - 字节0-3: 90 EB 64 00 (固定帧头)
+ * - 字节4-5: 年份 (完整年份，如2025 → 4=0xE9, 5=0x07)
+ * - 字节6-7: 月和日 (6=月, 7=日)
+ * - 字节8: 0F (控制字符显示)
+ * - 字节9: 01=关闭显示
+ * - 字节10-13: 时分秒毫秒 (10=时, 11=分, 12=秒, 13=毫秒/10)
+ * - 字节14-37: 随意填充 (使用00，共24个字节)
+ * - 字节38: 前38字节总和校验(低8位)
+ */
+QByteArray Dialog::generateTimeOffCommand(const QDateTime& dateTime)
+{
+    // 使用当前时间或指定时间
+    QDateTime useTime = dateTime.isValid() ? dateTime : QDateTime::currentDateTime();
+    
+    QByteArray command;
+    command.reserve(39);  // 预分配39字节空间
+    
+    // 字节0-3: 固定帧头 90 EB 64 00
+    command.append(static_cast<char>(0x90));
+    command.append(static_cast<char>(0xEB));
+    command.append(static_cast<char>(0x64));
+    command.append(static_cast<char>(0x00));
+    
+    // 字节4-5: 年份 (完整年份，小端序：低字节在前)
+    int year = useTime.date().year();          // 完整年份 (如2025)
+    command.append(static_cast<char>(year & 0xFF));         // 年份低字节在前
+    command.append(static_cast<char>((year >> 8) & 0xFF));  // 年份高字节在后
+    
+    // 字节6-7: 月和日 (十进制值直接编码)
+    int month = useTime.date().month();        // 月份 1-12
+    int day = useTime.date().day();            // 日期 1-31
+    command.append(static_cast<char>(month));
+    command.append(static_cast<char>(day));
+    
+    // 字节8: 0F (控制字符显示)
+    command.append(static_cast<char>(0x0F));
+    
+    // 字节9: 01=关闭显示 (这是与显示指令的唯一区别)
+    command.append(static_cast<char>(0x01));
+    
+    // 字节10-13: 时分秒毫秒
+    int hour = useTime.time().hour();          // 小时 0-23
+    int minute = useTime.time().minute();      // 分钟 0-59
+    int second = useTime.time().second();      // 秒数 0-59
+    int msec = useTime.time().msec();          // 毫秒 0-999
+    
+    command.append(static_cast<char>(hour));
+    command.append(static_cast<char>(minute));
+    command.append(static_cast<char>(second));
+    command.append(static_cast<char>(msec / 10));  // 毫秒/10，范围0-99
+    
+    // 字节14-37: 随意填充 (使用00，共24个字节)
+    for (int i = 14; i < 38; ++i) {
+        command.append(static_cast<char>(0x00));
+    }
+    
+    // 字节38: 前38字节总和校验(低8位)
+    unsigned int checksum = 0;
+    for (int i = 0; i < 38; ++i) {
+        checksum += static_cast<unsigned char>(command[i]);
+    }
+    command.append(static_cast<char>(checksum & 0xFF));
+    
+    // 验证指令长度并调试输出
+    qDebug() << "🔍 生成关闭显示指令长度:" << command.size() << "字节";
+    if (command.size() != 39) {
+        qDebug() << "❌ 警告：指令长度不是39字节！实际长度:" << command.size();
+    }
+    
+    // 调试输出每个字节的详细信息
+    QString debugHex;
+    for (int i = 0; i < command.size(); ++i) {
+        debugHex += QString("%1 ").arg(static_cast<unsigned char>(command[i]), 2, 16, QChar('0')).toUpper();
+    }
+    qDebug() << "🔍 生成的关闭显示指令数据:" << debugHex.trimmed();
+    
+    Q_ASSERT(command.size() == 39);
+    
+    return command;
+}
+
+/**
+ * @brief 刷新串口列表
+ */
+void Dialog::refreshSerialPorts()
+{
+    if (!m_serialPortCombo) return;
+    
+    m_serialPortCombo->clear();
+    
+    auto ports = QSerialPortInfo::availablePorts();
+    for (const auto& port : ports) {
+        QString displayName = QString("%1 (%2)").arg(port.portName()).arg(port.description());
+        m_serialPortCombo->addItem(displayName, port.portName());
+    }
+    
+    if (m_serialPortCombo->count() == 0) {
+        m_serialPortCombo->addItem("无可用串口", "");
+    }
+    
+    qDebug() << "🔄 串口列表已刷新，共找到" << ports.size() << "个串口";
+}
+
+/**
+ * @brief 连接/断开串口
+ */
+void Dialog::toggleSerialConnection()
+{
+    if (!m_serialPort || !m_connectSerialBtn || !m_serialStatusLabel) return;
+    
+    if (m_serialPort->isOpen()) {
+        // 断开串口
+        m_serialPort->close();
+        m_connectSerialBtn->setText("📡 打开串口");
+        m_connectSerialBtn->setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; }");
+        m_serialStatusLabel->setText("🔴 未连接");
+        m_serialStatusLabel->setStyleSheet("QLabel { color: #E74C3C; font-weight: bold; }");
+        qDebug() << "📡 串口已断开";
+    } else {
+        // 连接串口
+        QString portName = m_serialPortCombo->currentData().toString();
+        if (portName.isEmpty()) {
+            qDebug() << "❌ 没有选择有效的串口";
+            return;
+        }
+        
+        m_serialPort->setPortName(portName);
+        m_serialPort->setBaudRate(m_baudRateCombo->currentText().toInt());
+        m_serialPort->setDataBits(QSerialPort::Data8);
+        m_serialPort->setParity(QSerialPort::NoParity);
+        m_serialPort->setStopBits(QSerialPort::OneStop);
+        m_serialPort->setFlowControl(QSerialPort::NoFlowControl);
+        
+        if (m_serialPort->open(QIODevice::ReadWrite)) {
+            m_connectSerialBtn->setText("📡 关闭串口");
+            m_connectSerialBtn->setStyleSheet("QPushButton { background-color: #E74C3C; color: white; font-weight: bold; }");
+            m_serialStatusLabel->setText(QString("🟢 已连接 %1").arg(portName));
+            m_serialStatusLabel->setStyleSheet("QLabel { color: #27AE60; font-weight: bold; }");
+            qDebug() << "📡 串口已连接：" << portName << "@" << m_baudRateCombo->currentText();
+        } else {
+            qDebug() << "❌ 串口连接失败：" << m_serialPort->errorString();
+            m_serialStatusLabel->setText("🔴 连接失败");
+        }
+    }
+}
+
+/**
+ * @brief 发送时间字符显示指令
+ * 
+ * 获取当前最新时间并生成39字节指令发送。
+ * 确保发送的指令包含实时的系统时间和正确的校验和。
+ */
+void Dialog::sendTimeDisplayCommand()
+{
+    if (!m_serialPort || !m_serialPort->isOpen()) {
+        qDebug() << "❌ 串口未连接，无法发送指令";
+        return;
+    }
+    
+    // 获取发送时刻的实时系统时间
+    QDateTime sendTime = QDateTime::currentDateTime();
+    
+    // 使用统一的生成函数创建39字节指令
+    QByteArray command = generateTimeDisplayCommand(sendTime);
+    
+    // 发送前验证和调试
+    qDebug() << "📤 准备发送时间指令，指令长度:" << command.size() << "字节";
+    
+    // 发送指令
+    qint64 bytesWritten = m_serialPort->write(command);
+    qDebug() << "📤 串口实际发送字节数:" << bytesWritten << "/" << command.size();
+    if (bytesWritten > 0) {
+        m_totalBytesSent += bytesWritten;
+        m_commandCount++;
+        
+        // 生成16进制显示字符串
+        QString hexString;
+        for (int i = 0; i < command.size(); ++i) {
+            if (i > 0) hexString += " ";
+            hexString += QString("%1").arg(static_cast<unsigned char>(command[i]), 2, 16, QChar('0')).toUpper();
+        }
+        
+        // 生成详细的发送记录
+        QString timestamp = sendTime.toString("hh:mm:ss.zzz");
+        QString timeInfo = QString("完整时间: %1年%2月%3日 %4:%5:%6.%7")
+                           .arg(sendTime.date().year())
+                           .arg(sendTime.date().month(), 2, 10, QChar('0'))
+                           .arg(sendTime.date().day(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().hour(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().minute(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().second(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().msec() / 10, 2, 10, QChar('0'));
+        
+        QString displayText = QString("[%1] ⏰ 发送时间字符显示指令 (%2字节)\n"
+                                      "📅 %3\n"
+                                      "🎛️ 显示状态: %4\n"
+                                      "🔢 校验和: %5\n"
+                                      "📊 HEX: %6\n")
+                                .arg(timestamp)
+                                .arg(command.size())
+                                .arg(timeInfo)
+                                .arg(m_displayOnCheckBox && m_displayOnCheckBox->isChecked() ? "启用" : "禁用")
+                                .arg(QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper())
+                                .arg(hexString);
+        
+        m_commandSendDisplay->append(displayText);
+        updateCommandDataStats();
+        
+        qDebug() << "⏰ 时间字符显示指令已发送：" << timeInfo << "校验和:" << QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper();
+    } else {
+        qDebug() << "❌ 指令发送失败";
+    }
+}
+
+/**
+ * @brief 发送自定义指令
+ */
+void Dialog::sendCustomCommand()
+{
+    if (!m_serialPort || !m_serialPort->isOpen()) {
+        qDebug() << "❌ 串口未连接，无法发送指令";
+        return;
+    }
+    
+    QString commandText = m_customCommandEdit->text().trimmed();
+    if (commandText.isEmpty()) {
+        qDebug() << "❌ 请输入指令内容";
+        return;
+    }
+    
+    QByteArray command;
+    
+    if (m_hexModeCheckBox->isChecked()) {
+        // 16进制模式
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+        QRegularExpression hexPattern("([0-9A-Fa-f]{2})");
+        QRegularExpressionMatchIterator it = hexPattern.globalMatch(commandText.replace(" ", ""));
+        while (it.hasNext()) {
+            QRegularExpressionMatch match = it.next();
+            bool ok;
+            command.append(static_cast<char>(match.captured(1).toInt(&ok, 16)));
+            if (!ok) break;
+        }
+#else
+        QRegExp hexPattern("([0-9A-Fa-f]{2})");
+        int pos = 0;
+        QString cleanText = commandText.replace(" ", "");
+        while ((pos = hexPattern.indexIn(cleanText, pos)) != -1) {
+            bool ok;
+            command.append(static_cast<char>(hexPattern.cap(1).toInt(&ok, 16)));
+            if (!ok) break;
+            pos += hexPattern.matchedLength();
+        }
+#endif
+    } else {
+        // 文本模式
+        command = commandText.toUtf8();
+    }
+    
+    if (command.isEmpty()) {
+        qDebug() << "❌ 指令内容解析失败";
+        return;
+    }
+    
+    // 发送指令
+    qint64 bytesWritten = m_serialPort->write(command);
+    if (bytesWritten > 0) {
+        m_totalBytesSent += bytesWritten;
+        m_commandCount++;
+        
+        // 更新发送数据显示
+        QString hexString;
+        for (char byte : command) {
+            hexString += QString("%1 ").arg(static_cast<unsigned char>(byte), 2, 16, QChar('0')).toUpper();
+        }
+        
+        QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+        QString displayText = QString("[%1] 发送自定义指令 (%2字节):\n%3\n文本: %4\n")
+                                .arg(timestamp)
+                                .arg(command.size())
+                                .arg(hexString.trimmed())
+                                .arg(QString::fromUtf8(command));
+        
+        m_commandSendDisplay->append(displayText);
+        updateCommandDataStats();
+        
+        qDebug() << "📤 自定义指令已发送：" << hexString.trimmed();
+    } else {
+        qDebug() << "❌ 指令发送失败";
+    }
+}
+
+/**
+ * @brief 清空指令数据显示
+ */
+void Dialog::clearCommandData()
+{
+    if (m_commandReceiveDisplay) {
+        m_commandReceiveDisplay->clear();
+        m_commandReceiveDisplay->setPlainText("等待接收数据...");
+    }
+    if (m_commandSendDisplay) {
+        m_commandSendDisplay->clear();
+        m_commandSendDisplay->setPlainText("等待发送数据...");
+    }
+    
+    m_totalBytesSent = 0;
+    m_totalBytesReceived = 0;
+    m_commandCount = 0;
+    updateCommandDataStats();
+    
+    qDebug() << "🗑️ 指令数据已清空";
+}
+
+/**
+ * @brief 更新时间显示
+ * 
+ * 实时更新当前时间显示和39字节指令预览。
+ * 时间变化时，年月日时信息和校验和都会自动更新。
+ */
+void Dialog::updateTimeDisplay()
+{
+    if (!m_currentTimeLabel || !m_timeCommandPreview) return;
+    
+    QDateTime currentTime = QDateTime::currentDateTime();
+    
+    // 更新时间显示，包含秒数以便看到实时变化
+    m_currentTimeLabel->setText(currentTime.toString("yyyy-MM-dd hh:mm:ss"));
+    
+    // 实时生成39字节指令预览
+    QByteArray previewCommand = generateTimeDisplayCommand(currentTime);
+    
+    // 转换为16进制显示格式
+    QString hexString;
+    for (int i = 0; i < previewCommand.size(); ++i) {
+        if (i > 0) hexString += " ";
+        hexString += QString("%1").arg(static_cast<unsigned char>(previewCommand[i]), 2, 16, QChar('0')).toUpper();
+    }
+    
+    // 更新预览显示
+    m_timeCommandPreview->setText(hexString);
+    
+    // 在预览框的工具提示中显示解析信息
+    QString tooltipText = QString("📝 指令解析 (实时更新):\n"
+                                  "帧头: 90 EB 64 00\n"
+                                  "年份: %1 (字节4-5: %2 %3)\n"
+                                  "月日: %4月%5日 (字节6-7: %6 %7)\n"
+                                  "控制: 0F (字符显示控制)\n"
+                                  "状态: %8 (%9)\n"
+                                  "时间: %10:%11:%12.%13 (字节10-13)\n"
+                                  "填充: 00×24 (24个字节)\n"
+                                  "校验: %14 (前38字节累加和)")
+                          .arg(currentTime.date().year())
+                          .arg(static_cast<unsigned char>(previewCommand[4]), 2, 16, QChar('0')).toUpper()
+                          .arg(static_cast<unsigned char>(previewCommand[5]), 2, 16, QChar('0')).toUpper()
+                          .arg(currentTime.date().month())
+                          .arg(currentTime.date().day())
+                          .arg(static_cast<unsigned char>(previewCommand[6]), 2, 16, QChar('0')).toUpper()
+                          .arg(static_cast<unsigned char>(previewCommand[7]), 2, 16, QChar('0')).toUpper()
+                          .arg(static_cast<unsigned char>(previewCommand[9]), 2, 16, QChar('0')).toUpper()
+                          .arg(m_displayOnCheckBox && m_displayOnCheckBox->isChecked() ? "打开显示" : "关闭显示")
+                          .arg(currentTime.time().hour(), 2, 10, QChar('0'))
+                          .arg(currentTime.time().minute(), 2, 10, QChar('0'))
+                          .arg(currentTime.time().second(), 2, 10, QChar('0'))
+                          .arg(currentTime.time().msec() / 10, 2, 10, QChar('0'))
+                          .arg(static_cast<unsigned char>(previewCommand[38]), 2, 16, QChar('0')).toUpper();
+    
+    m_timeCommandPreview->setToolTip(tooltipText);
+}
+
+/**
+ * @brief 串口数据接收处理
+ */
+void Dialog::onCommandSerialDataReceived()
+{
+    if (!m_serialPort || !m_commandReceiveDisplay) return;
+    
+    QByteArray data = m_serialPort->readAll();
+    if (data.isEmpty()) return;
+    
+    m_totalBytesReceived += data.size();
+    
+    // 转换为16进制显示
+    QString hexString;
+    QString textString;
+    for (char byte : data) {
+        hexString += QString("%1 ").arg(static_cast<unsigned char>(byte), 2, 16, QChar('0')).toUpper();
+        textString += (byte >= 32 && byte <= 126) ? byte : '.';
+    }
+    
+    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+    QString displayText = QString("[%1] 接收数据 (%2字节):\n%3\n文本: %4\n")
+                            .arg(timestamp)
+                            .arg(data.size())
+                            .arg(hexString.trimmed())
+                            .arg(textString);
+    
+    m_commandReceiveDisplay->append(displayText);
+    updateCommandDataStats();
+    
+    qDebug() << "📥 接收数据：" << hexString.trimmed();
+}
+
+/**
+ * @brief 串口错误处理
+ */
+void Dialog::onCommandSerialError(QSerialPort::SerialPortError error)
+{
+    if (error != QSerialPort::NoError && m_serialPort) {
+        qDebug() << "❌ 串口错误：" << m_serialPort->errorString();
+        if (m_serialStatusLabel) {
+            m_serialStatusLabel->setText("🔴 连接错误");
+            m_serialStatusLabel->setStyleSheet("QLabel { color: #E74C3C; font-weight: bold; }");
+        }
+    }
+}
+
+/**
+ * @brief 字符显示状态改变
+ */
+void Dialog::onCommandDisplayStateChanged()
+{
+    updateTimeDisplay();  // 更新预览
+    qDebug() << "🎛️ 字符显示状态已改变：" << (m_displayOnCheckBox->isChecked() ? "启用" : "禁用");
+}
+
+/**
+ * @brief 更新指令数据统计
+ */
+void Dialog::updateCommandDataStats()
+{
+    if (!m_commandStatsLabel) return;
+    
+    QString statsText = QString("📊 统计: 发送%1字节 | 接收%2字节 | 指令%3条")
+                          .arg(m_totalBytesSent)
+                          .arg(m_totalBytesReceived)
+                          .arg(m_commandCount);
+    
+    m_commandStatsLabel->setText(statsText);
+}
+
+/**
+ * @brief 发送关闭字符显示指令
+ * 
+ * 获取当前最新时间并生成39字节关闭字符显示指令发送。
+ * 第8字节是0F，第9字节是01（关闭显示），其他和显示指令一样。
+ */
+void Dialog::sendTimeOffCommand()
+{
+    if (!m_serialPort || !m_serialPort->isOpen()) {
+        qDebug() << "❌ 串口未连接，无法发送指令";
+        return;
+    }
+    
+    // 获取发送时刻的实时系统时间
+    QDateTime sendTime = QDateTime::currentDateTime();
+    
+    // 生成关闭字符显示的39字节指令
+    QByteArray command = generateTimeOffCommand(sendTime);
+    
+    // 发送前验证和调试
+    qDebug() << "📤 准备发送关闭字符显示指令，指令长度:" << command.size() << "字节";
+    
+    // 发送指令
+    qint64 bytesWritten = m_serialPort->write(command);
+    qDebug() << "📤 串口实际发送字节数:" << bytesWritten << "/" << command.size();
+    if (bytesWritten > 0) {
+        m_totalBytesSent += bytesWritten;
+        m_commandCount++;
+        
+        // 生成16进制显示字符串
+        QString hexString;
+        for (int i = 0; i < command.size(); ++i) {
+            if (i > 0) hexString += " ";
+            hexString += QString("%1").arg(static_cast<unsigned char>(command[i]), 2, 16, QChar('0')).toUpper();
+        }
+        
+        // 生成详细的发送记录
+        QString timestamp = sendTime.toString("hh:mm:ss.zzz");
+        QString timeInfo = QString("完整时间: %1年%2月%3日 %4:%5:%6.%7")
+                           .arg(sendTime.date().year())
+                           .arg(sendTime.date().month(), 2, 10, QChar('0'))
+                           .arg(sendTime.date().day(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().hour(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().minute(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().second(), 2, 10, QChar('0'))
+                           .arg(sendTime.time().msec() / 10, 2, 10, QChar('0'));
+        
+        QString displayText = QString("[%1] 🚫 发送关闭字符显示指令 (%2字节)\n"
+                                      "📅 %3\n"
+                                      "🎛️ 显示状态: 关闭\n"
+                                      "🔢 校验和: %4\n"
+                                      "📊 HEX: %5\n")
+                                .arg(timestamp)
+                                .arg(command.size())
+                                .arg(timeInfo)
+                                .arg(QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper())
+                                .arg(hexString);
+        
+        m_commandSendDisplay->append(displayText);
+        updateCommandDataStats();
+        
+        qDebug() << "🚫 关闭字符显示指令已发送：" << timeInfo << "校验和:" << QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper();
+    } else {
+        qDebug() << "❌ 指令发送失败";
+    }
+}
+
+/**
+ * @brief 开始/停止自动切换字符显示
+ * 
+ * 控制每秒钟在开启和关闭字符显示之间自动切换。
+ * 点击按钮可以开始或停止自动切换功能。
+ */
+void Dialog::toggleAutoDisplaySwitch()
+{
+    if (!m_serialPort || !m_serialPort->isOpen()) {
+        qDebug() << "❌ 串口未连接，无法启动自动切换";
+        return;
+    }
+    
+    if (m_autoSwitchEnabled) {
+        // 停止自动切换
+        m_autoSwitchTimer->stop();
+        m_autoSwitchEnabled = false;
+        
+        // 更新按钮状态
+        m_autoSwitchBtn->setText("🔄 开始自动切换");
+        m_autoSwitchBtn->setStyleSheet("QPushButton { background-color: #3498DB; color: white; font-weight: bold; }");
+        
+        qDebug() << "⏹️ 自动切换字符显示已停止";
+        
+        // 添加停止记录到发送显示区
+        QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+        QString displayText = QString("[%1] ⏹️ 自动切换字符显示已停止\n").arg(timestamp);
+        m_commandSendDisplay->append(displayText);
+        
+    } else {
+        // 开始自动切换
+        m_currentDisplayState = true;  // 从开启状态开始
+        m_autoSwitchEnabled = true;
+        
+        // 启动定时器，每1000毫秒(1秒)切换一次
+        m_autoSwitchTimer->start(1000);
+        
+        // 更新按钮状态
+        m_autoSwitchBtn->setText("⏹️ 停止自动切换");
+        m_autoSwitchBtn->setStyleSheet("QPushButton { background-color: #E67E22; color: white; font-weight: bold; }");
+        
+        qDebug() << "▶️ 自动切换字符显示已启动，间隔1秒";
+        
+        // 添加启动记录到发送显示区
+        QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+        QString displayText = QString("[%1] ▶️ 自动切换字符显示已启动 (间隔1秒)\n").arg(timestamp);
+        m_commandSendDisplay->append(displayText);
+        
+        // 立即发送第一个指令（开启状态）
+        autoSwitchDisplay();
+    }
+}
+
+/**
+ * @brief 自动切换字符显示状态
+ * 
+ * 由定时器每秒调用一次，在开启和关闭字符显示之间切换。
+ * 自动生成带有当前时间的39字节指令并发送。
+ */
+void Dialog::autoSwitchDisplay()
+{
+    if (!m_serialPort || !m_serialPort->isOpen()) {
+        qDebug() << "❌ 串口断开，停止自动切换";
+        toggleAutoDisplaySwitch();  // 停止自动切换
+        return;
+    }
+    
+    // 获取当前时间
+    QDateTime currentTime = QDateTime::currentDateTime();
+    QByteArray command;
+    QString actionText;
+    QString actionIcon;
+    
+    if (m_currentDisplayState) {
+        // 当前是开启状态，发送关闭指令
+        command = generateTimeOffCommand(currentTime);
+        actionText = "关闭字符显示";
+        actionIcon = "🚫";
+        m_currentDisplayState = false;  // 切换到关闭状态
+    } else {
+        // 当前是关闭状态，发送开启指令
+        command = generateTimeDisplayCommand(currentTime);
+        actionText = "开启字符显示";
+        actionIcon = "⏰";
+        m_currentDisplayState = true;   // 切换到开启状态
+    }
+    
+    // 发送指令
+    qint64 bytesWritten = m_serialPort->write(command);
+    if (bytesWritten > 0) {
+        m_totalBytesSent += bytesWritten;
+        m_commandCount++;
+        
+        // 生成16进制显示字符串
+        QString hexString;
+        for (int i = 0; i < command.size(); ++i) {
+            if (i > 0) hexString += " ";
+            hexString += QString("%1").arg(static_cast<unsigned char>(command[i]), 2, 16, QChar('0')).toUpper();
+        }
+        
+        // 生成详细的发送记录
+        QString timestamp = currentTime.toString("hh:mm:ss.zzz");
+        QString timeInfo = QString("完整时间: %1年%2月%3日 %4:%5:%6.%7")
+                           .arg(currentTime.date().year())
+                           .arg(currentTime.date().month(), 2, 10, QChar('0'))
+                           .arg(currentTime.date().day(), 2, 10, QChar('0'))
+                           .arg(currentTime.time().hour(), 2, 10, QChar('0'))
+                           .arg(currentTime.time().minute(), 2, 10, QChar('0'))
+                           .arg(currentTime.time().second(), 2, 10, QChar('0'))
+                           .arg(currentTime.time().msec() / 10, 2, 10, QChar('0'));
+        
+        QString displayText = QString("[%1] %2 自动%3 (%4字节)\n"
+                                      "📅 %5\n"
+                                      "🎛️ 显示状态: %6\n"
+                                      "🔢 校验和: %7\n"
+                                      "📊 HEX: %8\n")
+                                .arg(timestamp)
+                                .arg(actionIcon)
+                                .arg(actionText)
+                                .arg(command.size())
+                                .arg(timeInfo)
+                                .arg(m_currentDisplayState ? "开启" : "关闭")
+                                .arg(QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper())
+                                .arg(hexString);
+        
+        m_commandSendDisplay->append(displayText);
+        updateCommandDataStats();
+        
+        qDebug() << QString("%1 自动%2指令已发送：%3 校验和:%4")
+                    .arg(actionIcon)
+                    .arg(actionText)
+                    .arg(timeInfo)
+                    .arg(QString("%1").arg(static_cast<unsigned char>(command[38]), 2, 16, QChar('0')).toUpper());
+    } else {
+        qDebug() << "❌ 自动切换指令发送失败";
+    }
+}
+
