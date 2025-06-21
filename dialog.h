@@ -25,6 +25,14 @@
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QRegularExpression>
+#include <QFileDialog>
+#include <QMenu>
+#include <QAction>
+#include <QApplication>
+#include <QClipboard>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QStringConverter>
+#endif
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
 #include <QRegExp>
 #endif
@@ -302,6 +310,21 @@ private slots:
      * @brief 更新指令数据统计
      */
     void updateCommandDataStats();
+    
+    /**
+     * @brief 切换编辑模式
+     */
+    void toggleEditMode(bool enabled);
+    
+    /**
+     * @brief 保存接收数据到文件
+     */
+    void saveReceiveDataToFile();
+    
+    /**
+     * @brief 显示接收数据右键菜单
+     */
+    void showReceiveDataContextMenu(const QPoint& pos);
 
 protected:
     /**
@@ -388,6 +411,10 @@ private:
     // 指令调试功能相关控件
     QComboBox* m_serialPortCombo;       ///< 串口选择下拉框
     QComboBox* m_baudRateCombo;         ///< 波特率选择
+    QComboBox* m_dataBitsCombo;         ///< 数据位选择
+    QComboBox* m_stopBitsCombo;         ///< 停止位选择
+    QComboBox* m_parityCombo;           ///< 校验位选择
+    QComboBox* m_flowControlCombo;      ///< 流控制选择
     QPushButton* m_refreshPortBtn;      ///< 刷新串口按钮
     QPushButton* m_connectSerialBtn;    ///< 串口连接按钮
     QLabel* m_serialStatusLabel;        ///< 串口连接状态标签
@@ -407,6 +434,8 @@ private:
     QTextEdit* m_commandSendDisplay;    ///< 指令发送数据显示区
     QPushButton* m_clearCommandBtn;     ///< 清空指令数据按钮
     QLabel* m_commandStatsLabel;        ///< 指令统计标签
+    QCheckBox* m_editModeCheckBox;      ///< 编辑模式开关
+    QPushButton* m_saveReceiveDataBtn;  ///< 保存接收数据按钮
     
     QSerialPort* m_serialPort;          ///< 串口对象
     QTimer* m_timeUpdateTimer;          ///< 时间更新定时器

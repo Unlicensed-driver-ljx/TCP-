@@ -2070,19 +2070,48 @@ void Dialog::createCommandTab()
     // 波特率
     serialLayout->addWidget(new QLabel("波特率:"), 1, 0);
     m_baudRateCombo = new QComboBox();
-    m_baudRateCombo->addItems({"9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"});
+    m_baudRateCombo->addItems({"1200", "2400", "4800", "9600", "14400", "19200", "28800", "38400", "56000", "57600", "76800", "115200", "128000", "230400", "256000", "460800", "921600", "1000000", "1500000", "2000000"});
     m_baudRateCombo->setCurrentText("115200");
+    m_baudRateCombo->setEditable(true);  // 允许用户输入自定义波特率
     serialLayout->addWidget(m_baudRateCombo, 1, 1);
+    
+    // 数据位
+    serialLayout->addWidget(new QLabel("数据位:"), 2, 0);
+    m_dataBitsCombo = new QComboBox();
+    m_dataBitsCombo->addItems({"5", "6", "7", "8"});
+    m_dataBitsCombo->setCurrentText("8");
+    serialLayout->addWidget(m_dataBitsCombo, 2, 1);
+    
+    // 停止位
+    serialLayout->addWidget(new QLabel("停止位:"), 3, 0);
+    m_stopBitsCombo = new QComboBox();
+    m_stopBitsCombo->addItems({"1", "1.5", "2"});
+    m_stopBitsCombo->setCurrentText("1");
+    serialLayout->addWidget(m_stopBitsCombo, 3, 1);
+    
+    // 校验位
+    serialLayout->addWidget(new QLabel("校验位:"), 4, 0);
+    m_parityCombo = new QComboBox();
+    m_parityCombo->addItems({"无校验", "奇校验", "偶校验", "标记校验", "空格校验"});
+    m_parityCombo->setCurrentText("无校验");
+    serialLayout->addWidget(m_parityCombo, 4, 1);
+    
+    // 流控制
+    serialLayout->addWidget(new QLabel("流控制:"), 5, 0);
+    m_flowControlCombo = new QComboBox();
+    m_flowControlCombo->addItems({"无流控", "硬件流控", "软件流控"});
+    m_flowControlCombo->setCurrentText("无流控");
+    serialLayout->addWidget(m_flowControlCombo, 5, 1);
     
     // 连接按钮和状态
     m_connectSerialBtn = new QPushButton("📡 打开串口");
     m_connectSerialBtn->setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; }");
-    serialLayout->addWidget(m_connectSerialBtn, 2, 0, 1, 2);
+    serialLayout->addWidget(m_connectSerialBtn, 6, 0, 1, 2);
     
     m_serialStatusLabel = new QLabel("🔴 未连接");
     m_serialStatusLabel->setAlignment(Qt::AlignCenter);
     m_serialStatusLabel->setStyleSheet("QLabel { color: #E74C3C; font-weight: bold; }");
-    serialLayout->addWidget(m_serialStatusLabel, 3, 0, 1, 2);
+    serialLayout->addWidget(m_serialStatusLabel, 7, 0, 1, 2);
     
     leftLayout->addWidget(serialGroup);
     
@@ -2184,11 +2213,29 @@ void Dialog::createCommandTab()
     monitorLayout->addWidget(m_commandSendDisplay);
     
     // 接收数据显示
-    monitorLayout->addWidget(new QLabel("📥 接收数据:"));
+    QHBoxLayout* receiveHeaderLayout = new QHBoxLayout();
+    receiveHeaderLayout->addWidget(new QLabel("📥 接收数据:"));
+    receiveHeaderLayout->addStretch();
+    
+    // 添加编辑模式开关
+    m_editModeCheckBox = new QCheckBox("编辑模式");
+    m_editModeCheckBox->setToolTip("启用后可以编辑接收数据内容");
+    receiveHeaderLayout->addWidget(m_editModeCheckBox);
+    
+    // 添加保存按钮
+    m_saveReceiveDataBtn = new QPushButton("💾");
+    m_saveReceiveDataBtn->setFixedSize(25, 25);
+    m_saveReceiveDataBtn->setToolTip("保存接收数据到文件");
+    m_saveReceiveDataBtn->setStyleSheet("QPushButton { background-color: #3498DB; color: white; font-weight: bold; }");
+    receiveHeaderLayout->addWidget(m_saveReceiveDataBtn);
+    
+    monitorLayout->addLayout(receiveHeaderLayout);
+    
     m_commandReceiveDisplay = new QTextEdit();
-    m_commandReceiveDisplay->setReadOnly(true);
+    m_commandReceiveDisplay->setReadOnly(true);  // 默认只读
     m_commandReceiveDisplay->setFont(QFont("Consolas", 9));
     m_commandReceiveDisplay->setPlainText("等待接收数据...");
+    m_commandReceiveDisplay->setContextMenuPolicy(Qt::CustomContextMenu);  // 启用自定义右键菜单
     monitorLayout->addWidget(m_commandReceiveDisplay);
     
     // 控制按钮
@@ -2219,6 +2266,9 @@ void Dialog::createCommandTab()
     connect(m_autoSwitchBtn, &QPushButton::clicked, this, &Dialog::toggleAutoDisplaySwitch);
     connect(m_sendCustomBtn, &QPushButton::clicked, this, &Dialog::sendCustomCommand);
     connect(m_clearCommandBtn, &QPushButton::clicked, this, &Dialog::clearCommandData);
+    connect(m_editModeCheckBox, &QCheckBox::toggled, this, &Dialog::toggleEditMode);
+    connect(m_saveReceiveDataBtn, &QPushButton::clicked, this, &Dialog::saveReceiveDataToFile);
+    connect(m_commandReceiveDisplay, &QTextEdit::customContextMenuRequested, this, &Dialog::showReceiveDataContextMenu);
     
     // 连接串口信号
 #if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
@@ -2457,21 +2507,98 @@ void Dialog::toggleSerialConnection()
         }
         
         m_serialPort->setPortName(portName);
-        m_serialPort->setBaudRate(m_baudRateCombo->currentText().toInt());
-        m_serialPort->setDataBits(QSerialPort::Data8);
-        m_serialPort->setParity(QSerialPort::NoParity);
-        m_serialPort->setStopBits(QSerialPort::OneStop);
-        m_serialPort->setFlowControl(QSerialPort::NoFlowControl);
+        
+        // 设置波特率（支持自定义输入）
+        bool ok;
+        int baudRate = m_baudRateCombo->currentText().toInt(&ok);
+        if (!ok || baudRate <= 0) {
+            qDebug() << "❌ 无效的波特率：" << m_baudRateCombo->currentText();
+            return;
+        }
+        m_serialPort->setBaudRate(baudRate);
+        
+        // 设置数据位
+        QSerialPort::DataBits dataBits;
+        int dataBitsValue = m_dataBitsCombo->currentText().toInt();
+        switch (dataBitsValue) {
+            case 5: dataBits = QSerialPort::Data5; break;
+            case 6: dataBits = QSerialPort::Data6; break;
+            case 7: dataBits = QSerialPort::Data7; break;
+            case 8: dataBits = QSerialPort::Data8; break;
+            default: dataBits = QSerialPort::Data8; break;
+        }
+        m_serialPort->setDataBits(dataBits);
+        
+        // 设置校验位
+        QSerialPort::Parity parity;
+        QString parityText = m_parityCombo->currentText();
+        if (parityText == "无校验") {
+            parity = QSerialPort::NoParity;
+        } else if (parityText == "奇校验") {
+            parity = QSerialPort::OddParity;
+        } else if (parityText == "偶校验") {
+            parity = QSerialPort::EvenParity;
+        } else if (parityText == "标记校验") {
+            parity = QSerialPort::MarkParity;
+        } else if (parityText == "空格校验") {
+            parity = QSerialPort::SpaceParity;
+        } else {
+            parity = QSerialPort::NoParity;
+        }
+        m_serialPort->setParity(parity);
+        
+        // 设置停止位
+        QSerialPort::StopBits stopBits;
+        QString stopBitsText = m_stopBitsCombo->currentText();
+        if (stopBitsText == "1") {
+            stopBits = QSerialPort::OneStop;
+        } else if (stopBitsText == "1.5") {
+            stopBits = QSerialPort::OneAndHalfStop;
+        } else if (stopBitsText == "2") {
+            stopBits = QSerialPort::TwoStop;
+        } else {
+            stopBits = QSerialPort::OneStop;
+        }
+        m_serialPort->setStopBits(stopBits);
+        
+        // 设置流控制
+        QSerialPort::FlowControl flowControl;
+        QString flowControlText = m_flowControlCombo->currentText();
+        if (flowControlText == "无流控") {
+            flowControl = QSerialPort::NoFlowControl;
+        } else if (flowControlText == "硬件流控") {
+            flowControl = QSerialPort::HardwareControl;
+        } else if (flowControlText == "软件流控") {
+            flowControl = QSerialPort::SoftwareControl;
+        } else {
+            flowControl = QSerialPort::NoFlowControl;
+        }
+        m_serialPort->setFlowControl(flowControl);
         
         if (m_serialPort->open(QIODevice::ReadWrite)) {
             m_connectSerialBtn->setText("📡 关闭串口");
             m_connectSerialBtn->setStyleSheet("QPushButton { background-color: #E74C3C; color: white; font-weight: bold; }");
-            m_serialStatusLabel->setText(QString("🟢 已连接 %1").arg(portName));
+            
+            // 显示详细的连接信息
+            QString configInfo = QString("🟢 已连接 %1\n%2-%3-%4-%5")
+                                    .arg(portName)
+                                    .arg(m_baudRateCombo->currentText())
+                                    .arg(m_dataBitsCombo->currentText())
+                                    .arg(m_parityCombo->currentText().left(1))
+                                    .arg(m_stopBitsCombo->currentText());
+            m_serialStatusLabel->setText(configInfo);
             m_serialStatusLabel->setStyleSheet("QLabel { color: #27AE60; font-weight: bold; }");
-            qDebug() << "📡 串口已连接：" << portName << "@" << m_baudRateCombo->currentText();
+            
+            qDebug() << "📡 串口已连接：" << portName 
+                     << "配置：" << m_baudRateCombo->currentText() 
+                     << m_dataBitsCombo->currentText() 
+                     << m_parityCombo->currentText() 
+                     << m_stopBitsCombo->currentText()
+                     << m_flowControlCombo->currentText();
         } else {
             qDebug() << "❌ 串口连接失败：" << m_serialPort->errorString();
             m_serialStatusLabel->setText("🔴 连接失败");
+            m_serialStatusLabel->setStyleSheet("QLabel { color: #E74C3C; font-weight: bold; }");
         }
     }
 }
@@ -2769,6 +2896,139 @@ void Dialog::updateCommandDataStats()
                           .arg(m_commandCount);
     
     m_commandStatsLabel->setText(statsText);
+}
+
+/**
+ * @brief 切换编辑模式
+ */
+void Dialog::toggleEditMode(bool enabled)
+{
+    if (!m_commandReceiveDisplay) return;
+    
+    m_commandReceiveDisplay->setReadOnly(!enabled);
+    
+    if (enabled) {
+        m_commandReceiveDisplay->setStyleSheet("QTextEdit { background-color: #FFF3CD; border: 2px solid #F39C12; }");
+        qDebug() << "📝 接收数据编辑模式已启用";
+    } else {
+        m_commandReceiveDisplay->setStyleSheet("");
+        qDebug() << "📝 接收数据编辑模式已禁用";
+    }
+}
+
+/**
+ * @brief 保存接收数据到文件
+ */
+void Dialog::saveReceiveDataToFile()
+{
+    if (!m_commandReceiveDisplay) return;
+    
+    QString content = m_commandReceiveDisplay->toPlainText();
+    if (content.isEmpty() || content == "等待接收数据...") {
+        qDebug() << "❌ 没有数据可保存";
+        return;
+    }
+    
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+    QString defaultFileName = QString("串口接收数据_%1.txt").arg(timestamp);
+    
+    QString fileName = QFileDialog::getSaveFileName(this, 
+                                                   "保存接收数据", 
+                                                   defaultFileName,
+                                                   "文本文件 (*.txt);;所有文件 (*.*)");
+    
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+            out.setCodec("UTF-8");  // Qt 5中设置UTF-8编码
+#else
+            out.setEncoding(QStringConverter::Utf8);  // Qt 6中设置UTF-8编码
+#endif
+            
+            // 添加文件头信息
+            out << "# 串口接收数据文件\n";
+            out << "# 保存时间: " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+            out << "# 串口配置: " << (m_serialPort && m_serialPort->isOpen() ? 
+                                      QString("%1 %2-%3-%4-%5").arg(m_serialPort->portName())
+                                                                .arg(m_baudRateCombo->currentText())
+                                                                .arg(m_dataBitsCombo->currentText())
+                                                                .arg(m_parityCombo->currentText())
+                                                                .arg(m_stopBitsCombo->currentText()) 
+                                      : "未连接") << "\n";
+            out << "# =====================================\n\n";
+            out << content;
+            
+            file.close();
+            qDebug() << "💾 接收数据已保存到：" << fileName;
+            
+            // 在发送显示区显示保存信息
+            QString timestamp_display = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+            QString displayText = QString("[%1] 💾 接收数据已保存到文件: %2\n").arg(timestamp_display).arg(fileName);
+            m_commandSendDisplay->append(displayText);
+        } else {
+            qDebug() << "❌ 文件保存失败：" << file.errorString();
+        }
+    }
+}
+
+/**
+ * @brief 显示接收数据右键菜单
+ */
+void Dialog::showReceiveDataContextMenu(const QPoint& pos)
+{
+    if (!m_commandReceiveDisplay) return;
+    
+    QMenu contextMenu(this);
+    
+    // 基本编辑操作
+    QAction* copyAction = contextMenu.addAction("📋 复制");
+    copyAction->setEnabled(m_commandReceiveDisplay->textCursor().hasSelection());
+    
+    QAction* selectAllAction = contextMenu.addAction("🔘 全选");
+    selectAllAction->setEnabled(!m_commandReceiveDisplay->toPlainText().isEmpty());
+    
+    contextMenu.addSeparator();
+    
+    // 编辑模式相关
+    QAction* editModeAction = contextMenu.addAction("📝 编辑模式");
+    editModeAction->setCheckable(true);
+    editModeAction->setChecked(m_editModeCheckBox->isChecked());
+    
+    if (m_editModeCheckBox->isChecked()) {
+        QAction* pasteAction = contextMenu.addAction("📄 粘贴");
+        pasteAction->setEnabled(QApplication::clipboard()->text().length() > 0);
+        
+        QAction* cutAction = contextMenu.addAction("✂️ 剪切");
+        cutAction->setEnabled(m_commandReceiveDisplay->textCursor().hasSelection());
+        
+        connect(pasteAction, &QAction::triggered, m_commandReceiveDisplay, &QTextEdit::paste);
+        connect(cutAction, &QAction::triggered, m_commandReceiveDisplay, &QTextEdit::cut);
+    }
+    
+    contextMenu.addSeparator();
+    
+    // 功能操作
+    QAction* saveAction = contextMenu.addAction("💾 保存到文件");
+    saveAction->setEnabled(!m_commandReceiveDisplay->toPlainText().isEmpty() && 
+                          m_commandReceiveDisplay->toPlainText() != "等待接收数据...");
+    
+    QAction* clearAction = contextMenu.addAction("🗑️ 清空");
+    clearAction->setEnabled(!m_commandReceiveDisplay->toPlainText().isEmpty());
+    
+    // 连接信号
+    connect(copyAction, &QAction::triggered, m_commandReceiveDisplay, &QTextEdit::copy);
+    connect(selectAllAction, &QAction::triggered, m_commandReceiveDisplay, &QTextEdit::selectAll);
+    connect(editModeAction, &QAction::triggered, m_editModeCheckBox, &QCheckBox::toggle);
+    connect(saveAction, &QAction::triggered, this, &Dialog::saveReceiveDataToFile);
+    connect(clearAction, &QAction::triggered, [this]() {
+        m_commandReceiveDisplay->clear();
+        m_commandReceiveDisplay->setPlainText("等待接收数据...");
+    });
+    
+    // 显示菜单
+    contextMenu.exec(m_commandReceiveDisplay->mapToGlobal(pos));
 }
 
 /**
