@@ -95,4 +95,21 @@ cmake_install.cmake
 *.class
 *.dex
 *.war
-*.jar 
+*.jar
+
+# 项目特定的忽略文件
+# 测试文件
+test_*.py
+test_*.cpp
+test_*.h
+
+# 备份文件
+*_OLD.*
+*_BACKUP.*
+
+# 临时编译文件
+*.c*
+*.stash
+
+# Qt构建缓存
+.qmake.stash 
